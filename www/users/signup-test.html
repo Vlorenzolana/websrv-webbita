@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Crear cuenta</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --muted: #9ca3af;
+      --text: #e5e7eb;
+      --primary: #22c55e;
+      --primary-700: #16a34a;
+      --danger: #ef4444;
+      --ring: #34d39933;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(1200px 800px at 10% -20%, #1f2937, transparent),
+        radial-gradient(1000px 600px at 110% 120%, #1e3a8a, transparent),
+        var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: linear-gradient(180deg, #0b1220, #0a0f1a 30%, #0b1220 100%);
+      border: 1px solid #1f2937;
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 10px 30px #00000066, inset 0 1px 0 #ffffff0a;
+      position: relative;
+    }
+
+    .title {
+      margin: 0 0 6px;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .field {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+    }
+
+    input {
+      width: 100%;
+      height: 42px;
+      border-radius: 10px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--text);
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+
+    input:focus {
+      border-color: #34d399;
+      box-shadow: 0 0 0 5px var(--ring);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 4px 0 18px;
+      gap: 10px;
+    }
+
+    .a {
+      color: #93c5fd;
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    .a:hover {
+      text-decoration: underline;
+    }
+
+    button {
+      width: 100%;
+      height: 44px;
+      border: 0;
+      border-radius: 10px;
+      font-weight: 700;
+      letter-spacing: .2px;
+      color: #07110e;
+      background: linear-gradient(180deg, var(--primary), var(--primary-700));
+      cursor: pointer;
+      box-shadow: 0 8px 20px #16a34a44, inset 0 1px 0 #ffffff22;
+      transition: transform .05s ease, filter .15s ease, box-shadow .15s ease;
+    }
+
+    button:hover {
+      filter: brightness(1.05);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button[disabled] {
+      opacity: .7;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 10px;
+      min-height: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .footer {
+      margin-top: 14px;
+      text-align: center;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .footer a {
+      color: #93c5fd;
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="card" role="main">
+    <h1 class="title">Crear cuenta</h1>
+    <p class="subtitle">Regístrate con tu nombre de usuario, correo y contraseña.</p>
+
+    <form id="signup-form" method="POST" action="/users/signup" novalidate>
+      <div class="field">
+        <label for="username">Usuario</label>
+        <input id="username" name="username" type="text" autocomplete="username" required minlength="3" />
+      </div>
+
+      <div class="field">
+        <label for="email">Correo (opcional)</label>
+        <input id="email" name="email" type="email" autocomplete="email" placeholder="tu@correo.com" />
+      </div>
+
+      <div class="field">
+        <label for="password">Contraseña</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="6" />
+      </div>
+
+      <div class="field">
+        <label for="confirm">Confirmar contraseña</label>
+        <input id="confirm" name="confirm" type="password" autocomplete="new-password" required minlength="6" />
+      </div>
+
+      <div class="row">
+        <a class="a" href="/users/user-test.html">¿Ya tienes cuenta? Inicia sesión</a>
+        <span></span>
+      </div>
+
+      <button id="signup-btn" type="submit">Crear cuenta</button>
+      <div id="status" class="status" aria-live="polite"></div>
+    </form>
+
+    <div class="footer">
+      También puedes volver al <a href="/">inicio</a>.
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      const form = document.getElementById('signup-form');
+      const btn = document.getElementById('signup-btn');
+      const statusEl = document.getElementById('status');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg || '';
+        statusEl.classList.toggle('error', !!isError);
+      }
+
+      function validEmail(email) {
+        if (!email) return true; // es opcional
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setStatus('');
+
+        const username = (document.getElementById('username').value || '').trim();
+        const email = (document.getElementById('email').value || '').trim();
+        const password = document.getElementById('password').value || '';
+        const confirm = document.getElementById('confirm').value || '';
+
+        if (!username || username.length < 3) {
+          setStatus('El usuario debe tener al menos 3 caracteres.', true);
+          return;
+        }
+        if (!validEmail(email)) {
+          setStatus('Introduce un correo válido o deja el campo vacío.', true);
+          return;
+        }
+        if (!password || password.length < 1) {
+          setStatus('La contraseña debe tener al menos 1 caracteres.', true);
+          return;
+        }
+        if (password !== confirm) {
+          setStatus('Las contraseñas no coinciden.', true);
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Creando...';
+
+        try {
+          const body = new URLSearchParams({ username, email, password });
+          const res = await fetch(form.action || '/users/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+            credentials: 'include' // por si el servidor establece cookie de sesión
+          });
+
+          if (res.status === 201 || res.status === 204) {
+            // Registro OK sin cuerpo
+            window.location.href = '/users/user-test.html';
+            return;
+          }
+
+          if (res.ok && (res.headers.get('content-type') || '').includes('application/json')) {
+            try {
+              const data = await res.json();
+              if (data && data.redirect) {
+                window.location.href = data.redirect;
+                return;
+              }
+            } catch (_) { /* ignore */ }
+          }
+
+          if (res.ok) {
+            window.location.href = '/users/user-test.html';
+            return;
+          }
+
+          let msg = 'Error al crear la cuenta.';
+          const text = await res.text();
+          if (text) msg = text.slice(0, 300);
+          setStatus(msg, true);
+        } catch (_) {
+          setStatus('No se pudo conectar con el servidor.', true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Crear cuenta';
+        }
+      });
+    })();
+  </script>
+</body>
+
+</html>

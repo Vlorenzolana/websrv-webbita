@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba DELETE - WebSrv</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+        :root {
+            --danger-color: #dc3545;
+            --danger-dark: #c82333;
+            --warning-color: #ffc107;
+            --secondary-color: #f8f9fa;
+            --text-primary: #2c3e50;
+            --text-secondary: #6c757d;
+            --border-color: #e9ecef;
+            --shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #ff6b6b 0%, #4ecdc4 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .warning-banner {
+            background: var(--warning-color);
+            color: #856404;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            font-weight: 500;
+        }
+
+        .warning-icon {
+            font-size: 1.5rem;
+            margin-right: 10px;
+        }
+
+        .test-container {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: var(--shadow);
+            margin-bottom: 30px;
+        }
+
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--danger-color);
+        }
+
+        .confirmation-section {
+            background: #fff5f5;
+            border: 2px solid #fed7d7;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+
+        .confirmation-checkbox {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .confirmation-checkbox input {
+            margin-right: 10px;
+            transform: scale(1.2);
+        }
+
+        .delete-button {
+            background: var(--danger-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .delete-button.enabled {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .delete-button.enabled:hover {
+            background: var(--danger-dark);
+            transform: translateY(-2px);
+        }
+
+        .result-container {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: var(--shadow);
+            margin-top: 20px;
+            display: none;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-right: 15px;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .result-content {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+        }
+
+        .file-list {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .file-item:hover {
+            background: #e9ecef;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="index.html" class="back-button">← Volver al Dashboard</a>
+        
+        <div class="header">
+            <h1>Prueba DELETE</h1>
+            <p>Eliminar recursos del servidor</p>
+        </div>
+
+        <div class="warning-banner">
+            <div class="warning-icon">⚠️</div>
+            <div>
+                <strong>¡Precaución!</strong> Esta acción eliminará permanentemente el archivo del servidor. 
+                Asegúrate de que realmente quieres eliminar el archivo especificado.
+            </div>
+        </div>
+
+        <div class="test-container">
+            <div class="input-group">
+                <label for="file-path">Ruta del archivo a eliminar:</label>
+                <input type="text" id="file-path" placeholder="/uploads/archivo.txt">
+            </div>
+
+            <div class="file-list" id="file-list">
+                <h4 style="margin-bottom: 15px;">Archivos disponibles (haz clic para seleccionar):</h4>
+                <div class="file-item" onclick="selectFile('/uploads/ejemplo.txt')">
+                    📄 /uploads/ejemplo.txt
+                </div>
+                <div class="file-item" onclick="selectFile('/uploads/imagen.jpg')">
+                    🖼️ /uploads/imagen.jpg
+                </div>
+                <div class="file-item" onclick="selectFile('/uploads/documento.pdf')">
+                    📋 /uploads/documento.pdf
+                </div>
+            </div>
+            
+            <div class="confirmation-section">
+                <div class="confirmation-checkbox">
+                    <input type="checkbox" id="confirm-delete" onchange="toggleDeleteButton()">
+                    <label for="confirm-delete">Confirmo que quiero eliminar este archivo permanentemente</label>
+                </div>
+                <div class="confirmation-checkbox">
+                    <input type="checkbox" id="understand-risk" onchange="toggleDeleteButton()">
+                    <label for="understand-risk">Entiendo que esta acción no se puede deshacer</label>
+                </div>
+            </div>
+
+            <button class="delete-button" id="delete-button" onclick="performDeleteTest()">
+                🗑️ Eliminar archivo
+            </button>
+        </div>
+
+        <div class="result-container" id="result-container">
+            <div class="result-header">
+                <div class="status-badge" id="status-badge">200 OK</div>
+                <div id="response-info">Archivo eliminado</div>
+            </div>
+            <div class="result-content" id="result-content"></div>
+        </div>
+    </div>
+
+    <script>
+        function selectFile(filePath) {
+            document.getElementById('file-path').value = filePath;
+        }
+
+        function toggleDeleteButton() {
+            const confirmDelete = document.getElementById('confirm-delete').checked;
+            const understandRisk = document.getElementById('understand-risk').checked;
+            const deleteButton = document.getElementById('delete-button');
+            
+            if (confirmDelete && understandRisk) {
+                deleteButton.classList.add('enabled');
+            } else {
+                deleteButton.classList.remove('enabled');
+            }
+        }
+
+        async function performDeleteTest() {
+            const filePath = document.getElementById('file-path').value;
+            const resultContainer = document.getElementById('result-container');
+            const statusBadge = document.getElementById('status-badge');
+            const responseInfo = document.getElementById('response-info');
+            const resultContent = document.getElementById('result-content');
+
+            if (!filePath) {
+                alert('Por favor, especifica la ruta del archivo a eliminar');
+                return;
+            }
+
+            try {
+                const response = await fetch(filePath, {
+                    method: 'DELETE'
+                });
+                
+                const text = await response.text();
+                
+                resultContainer.style.display = 'block';
+                
+                if (response.ok) {
+                    statusBadge.className = 'status-badge status-success';
+                    statusBadge.textContent = `${response.status} ${response.statusText}`;
+                    responseInfo.textContent = 'Archivo eliminado correctamente';
+                } else {
+                    statusBadge.className = 'status-badge status-error';
+                    statusBadge.textContent = `${response.status} ${response.statusText}`;
+                    responseInfo.textContent = 'Error al eliminar el archivo';
+                }
+                
+                resultContent.textContent = text || 'Sin contenido en la respuesta';
+                
+                // Resetear formulario después de la operación
+                document.getElementById('confirm-delete').checked = false;
+                document.getElementById('understand-risk').checked = false;
+                toggleDeleteButton();
+                
+            } catch (error) {
+                resultContainer.style.display = 'block';
+                statusBadge.className = 'status-badge status-error';
+                statusBadge.textContent = 'Error';
+                responseInfo.textContent = 'Error de conexión';
+                resultContent.textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subir Archivo - WebSrv</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+        :root {
+            --primary-color: #6a5acd;
+            --primary-dark: #5a4ab9;
+            --secondary-color: #f8f9fa;
+            --text-primary: #2c3e50;
+            --text-secondary: #6c757d;
+            --border-color: #e9ecef;
+            --shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            --success-color: #28a745;
+            --error-color: #dc3545;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            /* Updated background to match get-test.html gradient */
+            background: linear-gradient(135deg, #6a5acd 0%, #2c1810 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Added header section like get-test.html */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        /* Added back button like get-test.html */
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .upload-container {
+            background-color: white;
+            padding: 40px;
+            /* Updated border radius to match other pages */
+            border-radius: 16px;
+            /* Updated shadow to match other pages */
+            box-shadow: var(--shadow);
+            width: 100%;
+            text-align: center;
+        }
+
+        .upload-container h2 {
+            color: var(--text-primary);
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        
+        .upload-container p {
+            color: var(--text-secondary);
+            margin-bottom: 30px;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 40px 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-area.drag-over {
+            border-color: var(--primary-color);
+            background-color: #f8f7ff;
+        }
+
+        .upload-area .icon {
+            font-size: 48px;
+            color: var(--primary-color);
+        }
+
+        .upload-area .upload-text {
+            color: var(--text-primary);
+            font-weight: 500;
+            margin-top: 15px;
+        }
+        
+        .upload-area .support-text {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+
+        #file-name {
+            margin-top: 20px;
+            font-weight: 500;
+            color: var(--primary-color);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .submit-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 20px;
+            width: 100%;
+            transition: all 0.3s ease;
+            display: none;
+        }
+
+        .submit-btn:hover {
+            background-color: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Added back button navigation -->
+        <a href="index.html" class="back-button">← Volver al Dashboard</a>
+        
+        <!-- Added header section with white text -->
+        <div class="header">
+            <h1>Subir Archivo</h1>
+            <p>Los archivos se guardarán en el directorio /uploads/</p>
+        </div>
+
+        <div class="upload-container">
+            <!-- Changed h1 to h2 since main title is now in header -->
+            <h2>Selecciona tu archivo</h2>
+            <p>Arrastra y suelta o haz clic para seleccionar</p>
+            
+            <form id="upload-form" action="" method="post" enctype="multipart/form-data">
+                <div class="upload-area" id="upload-area">
+                    <div class="icon">📁</div>
+                    <div class="upload-text">Seleccionar archivo</div>
+                    <div class="support-text">Soporta imágenes, vídeos, PDFs, etc.</div>
+                </div>
+                <div id="file-name"></div>
+                <input type="file" name="file" id="file-input">
+                <button type="submit" class="submit-btn" id="submit-btn">Subir Archivo</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const fileNameDisplay = document.getElementById('file-name');
+        const submitBtn = document.getElementById('submit-btn');
+        const uploadForm = document.getElementById('upload-form');
+
+        // Abrir el selector de archivos al hacer clic en el área
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Manejar la selección de archivos
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        // Manejar el 'drag and drop'
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            if (e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files; // Asignar el archivo al input
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            fileNameDisplay.textContent = `Archivo seleccionado: ${file.name}`;
+            submitBtn.style.display = 'block';
+            // Actualizamos la acción del formulario para usar el nombre del archivo original
+            uploadForm.action = `/uploads/${file.name}`;
+        }
+    </script>
+</body>
+</html>
+

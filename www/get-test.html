@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba GET - WebSrv</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+        :root {
+            --primary-color: #28a745;
+            --primary-dark: #218838;
+            --secondary-color: #f8f9fa;
+            --text-primary: #2c3e50;
+            --text-secondary: #6c757d;
+            --border-color: #e9ecef;
+            --shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #52c234 0%, #061700 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .test-container {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: var(--shadow);
+            margin-bottom: 30px;
+        }
+
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .test-button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+
+        .test-button:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .result-container {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: var(--shadow);
+            margin-top: 20px;
+            display: none;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-right: 15px;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .result-content {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .quick-tests {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .quick-test-btn {
+            background: #f8f9fa;
+            border: 2px solid var(--border-color);
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .quick-test-btn:hover {
+            border-color: var(--primary-color);
+            background: #e8f5e8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="index.html" class="back-button">← Volver al Dashboard</a>
+        
+        <div class="header">
+            <h1>Prueba GET</h1>
+            <p>Obtén recursos del servidor</p>
+        </div>
+
+        <div class="test-container">
+            <div class="input-group">
+                <label for="url-input">URL del recurso:</label>
+                <input type="text" id="url-input" placeholder="/uploads/archivo.txt" value="/">
+            </div>
+            
+            <div class="quick-tests">
+                <button class="quick-test-btn" onclick="setUrl('/')">Página principal</button>
+                <button class="quick-test-btn" onclick="setUrl('/uploads/')">Directorio uploads</button>
+                <button class="quick-test-btn" onclick="setUrl('/uploader.html')">Página uploader</button>
+                <button class="quick-test-btn" onclick="setUrl('/favicon.ico')">Favicon</button>
+            </div>
+
+            <button class="test-button" onclick="performGetTest()">Realizar petición GET</button>
+        </div>
+
+        <div class="result-container" id="result-container">
+            <div class="result-header">
+                <div class="status-badge" id="status-badge">200 OK</div>
+                <div id="response-info">Respuesta recibida</div>
+            </div>
+            <div class="result-content" id="result-content"></div>
+        </div>
+    </div>
+
+    <script>
+        function setUrl(url) {
+            document.getElementById('url-input').value = url;
+        }
+
+        async function performGetTest() {
+            const url = document.getElementById('url-input').value;
+            const resultContainer = document.getElementById('result-container');
+            const statusBadge = document.getElementById('status-badge');
+            const responseInfo = document.getElementById('response-info');
+            const resultContent = document.getElementById('result-content');
+
+            try {
+                const response = await fetch(url);
+                const text = await response.text();
+                
+                resultContainer.style.display = 'block';
+                
+                if (response.ok) {
+                    statusBadge.className = 'status-badge status-success';
+                    statusBadge.textContent = `${response.status} ${response.statusText}`;
+                } else {
+                    statusBadge.className = 'status-badge status-error';
+                    statusBadge.textContent = `${response.status} ${response.statusText}`;
+                }
+                
+                responseInfo.textContent = `Tamaño: ${text.length} bytes | Tipo: ${response.headers.get('content-type') || 'desconocido'}`;
+                
+                // Mostrar contenido limitado para archivos muy grandes
+                if (text.length > 5000) {
+                    resultContent.textContent = text.substring(0, 5000) + '\n\n... (contenido truncado)';
+                } else {
+                    resultContent.textContent = text;
+                }
+                
+            } catch (error) {
+                resultContainer.style.display = 'block';
+                statusBadge.className = 'status-badge status-error';
+                statusBadge.textContent = 'Error';
+                responseInfo.textContent = 'Error de conexión';
+                resultContent.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        // Permitir envío con Enter
+        document.getElementById('url-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                performGetTest();
+            }
+        });
+    </script>
+</body>
+</html>
+

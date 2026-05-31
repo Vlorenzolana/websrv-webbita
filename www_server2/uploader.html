@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subir Archivo al Servidor</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
+
+        :root {
+            --primary-color: #6a5acd;
+            --secondary-color: #f0f0f0;
+            --font-color: #333;
+            --border-color: #ddd;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: var(--secondary-color);
+            margin: 0;
+        }
+
+        .upload-container {
+            background-color: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        .upload-container h1 {
+            color: var(--font-color);
+            margin-bottom: 10px;
+        }
+        
+        .upload-container p {
+            color: #777;
+            margin-bottom: 30px;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 40px 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-area.drag-over {
+            border-color: var(--primary-color);
+            background-color: #f8f7ff;
+        }
+
+        .upload-area .icon {
+            font-size: 48px;
+            color: var(--primary-color);
+        }
+
+        .upload-area .upload-text {
+            color: var(--font-color);
+            font-weight: 500;
+            margin-top: 15px;
+        }
+        
+        .upload-area .support-text {
+            color: #aaa;
+            font-size: 0.9em;
+        }
+
+        #file-name {
+            margin-top: 20px;
+            font-weight: 500;
+            color: var(--primary-color);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .submit-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 20px;
+            width: 100%;
+            transition: background-color 0.3s ease;
+            display: none; /* Oculto hasta que se seleccione un archivo */
+        }
+
+        .submit-btn:hover {
+            background-color: #5a4ab9;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="upload-container">
+        <h1>Sube tu Archivo</h1>
+        <p>Los archivos se guardarán en el directorio /uploads/</p>
+        
+        <form id="upload-form" action="" method="post" enctype="multipart/form-data">
+            <div class="upload-area" id="upload-area">
+                <div class="icon">📁</div>
+                <div class="upload-text">Arrastra y suelta o haz clic para seleccionar</div>
+                <div class="support-text">Soporta imágenes, vídeos, PDFs, etc.</div>
+            </div>
+            <div id="file-name"></div>
+            <input type="file" name="file" id="file-input">
+            <button type="submit" class="submit-btn" id="submit-btn">Subir Archivo</button>
+        </form>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const fileNameDisplay = document.getElementById('file-name');
+        const submitBtn = document.getElementById('submit-btn');
+        const uploadForm = document.getElementById('upload-form');
+
+        // Abrir el selector de archivos al hacer clic en el área
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Manejar la selección de archivos
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        // Manejar el 'drag and drop'
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            if (e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files; // Asignar el archivo al input
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            fileNameDisplay.textContent = `Archivo seleccionado: ${file.name}`;
+            submitBtn.style.display = 'block';
+            // Actualizamos la acción del formulario para usar el nombre del archivo original
+            uploadForm.action = `/uploads/${file.name}`;
+        }
+    </script>
+</body>
+</html>
