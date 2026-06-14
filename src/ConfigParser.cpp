@@ -1,7 +1,9 @@
 #include "../includes/ConfigParser.hpp"
+#include "../includes/ConfigValidator.hpp"
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <cstdlib>
 
 ConfigParser::ConfigParser()
@@ -43,8 +45,7 @@ std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
 
     if (!file.is_open())
     {
-        std::cerr << "Error: Could not open config file: " << filename << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Could not open config file: " + filename);
     }
 
     std::string line;
@@ -56,7 +57,6 @@ std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
     while (std::getline(file, line))
     {
         line = _trim(line);
-        
         if (line.empty() || line[0] == '#')
         {
             continue;
@@ -84,12 +84,16 @@ std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
 
     if (state != GLOBAL)
     {
-        std::cerr << "Error: Unclosed curly braces at the end of file." << std::endl;
         file.close();
-        std::exit(1);
+        throw std::runtime_error("Unclosed curly braces at the end of file.");
     }
 
     file.close();
+
+    // Delegate semantic control to the specialized validator class
+    ConfigValidator validator;
+    validator.validateAndNormalize(servers);
+
     return servers;
 }
 
@@ -105,8 +109,7 @@ void ConfigParser::_handleGLOBAL(ParsingState& state, const std::vector<std::str
     }
     else
     {
-        std::cerr << "Error: Config outside server block: " << line << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Config outside server block: " + line);
     }
 }
 
@@ -122,8 +125,7 @@ void ConfigParser::_handleSERVER(ParsingState& state, ServerConfig& current_serv
     {
         if (tokens.size() < 3 || tokens[tokens.size() - 1] != "{")
         {
-            std::cerr << "Error: Invalid location syntax: " << line << std::endl;
-            std::exit(1);
+            throw std::runtime_error("Invalid location syntax: " + line);
         }
         current_location = LocationConfig();
         current_location.path = tokens[1];
@@ -159,8 +161,7 @@ void ConfigParser::_processServerLine(ServerConfig& server, const std::string& l
     std::string lastToken = tokens[tokens.size() - 1];
     if (lastToken[lastToken.size() - 1] != ';')
     {
-        std::cerr << "Error: Missing ';' at the end of directive: " << line << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Missing ';' at the end of directive: " + line);
     }
 
     if (tokens[0] == "listen" && tokens.size() == 2)
@@ -185,8 +186,7 @@ void ConfigParser::_processServerLine(ServerConfig& server, const std::string& l
     }
     else
     {
-        std::cerr << "Error: Unknown or invalid server directive: " << tokens[0] << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Unknown or invalid server directive: " + tokens[0]);
     }
 }
 
@@ -201,8 +201,7 @@ void ConfigParser::_processLocationLine(LocationConfig& location, const std::str
     std::string lastToken = tokens[tokens.size() - 1];
     if (lastToken[lastToken.size() - 1] != ';')
     {
-        std::cerr << "Error: Missing ';' at the end of directive: " << line << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Missing ';' at the end of directive: " + line);
     }
 
     if (tokens[0] == "allowed_methods")
@@ -219,8 +218,7 @@ void ConfigParser::_processLocationLine(LocationConfig& location, const std::str
     }
     else
     {
-        std::cerr << "Error: Unknown or invalid location directive: " << tokens[0] << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Unknown or invalid location directive: " + tokens[0]);
     }
 }
 
@@ -228,8 +226,7 @@ void ConfigParser::_parseLocationMethods(LocationConfig& location, const std::ve
 {
     if (tokens.size() < 2)
     {
-        std::cerr << "Error: Empty allowed_methods directive." << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Empty allowed_methods directive.");
     }
     
     for (size_t i = 1; i < tokens.size(); ++i)
@@ -242,8 +239,7 @@ void ConfigParser::_parseLocationMethods(LocationConfig& location, const std::ve
         
         if (method != "GET" && method != "POST" && method != "DELETE")
         {
-            std::cerr << "Error: Invalid HTTP method: " << method << std::endl;
-            std::exit(1);
+            throw std::runtime_error("Invalid HTTP method: " + method);
         }
         location.allowed_methods.push_back(method);
     }
@@ -253,15 +249,13 @@ void ConfigParser::_parseLocationReturn(LocationConfig& location, const std::vec
 {
     if (tokens.size() != 3)
     {
-        std::cerr << "Error: Invalid return directive syntax." << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Invalid return directive syntax.");
     }
 
     std::stringstream ss(tokens[1]);
     if (!(ss >> location.return_code))
     {
-        std::cerr << "Error: Invalid redirection code." << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Invalid redirection code.");
     }
     location.return_url = tokens[2].substr(0, tokens[2].size() - 1);
 }
@@ -289,8 +283,7 @@ void ConfigParser::_parseLocationBasic(LocationConfig& location, const std::vect
         }
         else
         {
-            std::cerr << "Error: Invalid autoindex value (use on/off): " << val << std::endl;
-            std::exit(1);
+            throw std::runtime_error("Invalid autoindex value (use on/off): " + val);
         }
     }
     else if (tokens[0] == "index")
@@ -304,11 +297,6 @@ void ConfigParser::_parseLocationBasic(LocationConfig& location, const std::vect
             }
             location.index_files.push_back(idx);
         }
-    }
-    else
-    {
-        std::cerr << "Error: Invalid arguments count for directive: " << tokens[0] << std::endl;
-        std::exit(1);
     }
 }
 
@@ -324,8 +312,7 @@ int ConfigParser::_parsePort(const std::string& value)
     int port;
     if (!(ss >> port) || !ss.eof() || port < 1 || port > 65535)
     {
-        std::cerr << "Error: Invalid port value: " << value << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Invalid port value: " + value);
     }
     return port;
 }
@@ -342,8 +329,7 @@ long long ConfigParser::_parseLimit(const std::string& value)
     long long limit;
     if (!(ss >> limit) || !ss.eof() || limit < 0)
     {
-        std::cerr << "Error: Invalid client_max_body_size value: " << value << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Invalid client_max_body_size value: " + value);
     }
     return limit;
 }
@@ -353,8 +339,7 @@ void ConfigParser::_parseErrorPage(std::map<int, std::string>& error_pages, cons
     std::vector<std::string> tokens = _split(line);
     if (tokens.size() < 3)
     {
-        std::cerr << "Error: Invalid error_page directive: " << line << std::endl;
-        std::exit(1);
+        throw std::runtime_error("Invalid error_page directive: " + line);
     }
 
     std::string path = tokens[tokens.size() - 1];
@@ -369,8 +354,7 @@ void ConfigParser::_parseErrorPage(std::map<int, std::string>& error_pages, cons
         int code;
         if (!(ss >> code) || code < 300 || code > 599)
         {
-            std::cerr << "Error: Invalid error code: " << tokens[i] << std::endl;
-            std::exit(1);
+            throw std::runtime_error("Invalid error code: " + tokens[i]);
         }
         error_pages[code] = path;
     }

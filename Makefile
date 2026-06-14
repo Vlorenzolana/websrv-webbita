@@ -8,7 +8,8 @@ OBJ_DIR     =   obj
 INC_DIR     =   includes
 
 SRC         =   $(SRC_DIR)/main.cpp \
-                $(SRC_DIR)/ConfigParser.cpp
+                $(SRC_DIR)/ConfigParser.cpp \
+                $(SRC_DIR)/ConfigValidator.cpp
 
 OBJ         =   $(SRC:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 
