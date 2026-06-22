@@ -19,7 +19,7 @@ int main()
 
 int main(int argc, char** argv)
 {
-	const char* path = (argc >= 2) ? argv[1] : "config/webserv.conf";
+	const char* path = (argc >= 2) ? argv[1] : "www/webserv.conf";
 
 	std::signal(SIGPIPE, SIG_IGN);
 
@@ -27,12 +27,10 @@ int main(int argc, char** argv)
 		ConfigParser parser;
 		std::vector<ServerConfig> servers = parser.parseFile(path);
 
-		ConfigValidator validator;
-		validator.validateAndNormalize(servers);
-
 		// MVP: usamos solo el primer server block
 		Server server(servers[0].port);
 		server.init();
+		std::cout << "webserv listening on port " << servers[0].port << std::endl;
 		server.run();
 	}
 	catch (const std::exception& e) {
