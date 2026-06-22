@@ -1,39 +1,47 @@
 NAME        =   webserv
-
 CC          =   c++
 CFLAGS      =   -Wall -Wextra -Werror -std=c++98
 
-SRC_DIR     =   src
 OBJ_DIR     =   obj
-INC_DIR     =   includes
+SRC_DIR     =   src
+INC_DIR     =   include
 
 SRC         =   $(SRC_DIR)/main.cpp \
+                $(SRC_DIR)/Server.cpp \
                 $(SRC_DIR)/ConfigParser.cpp \
-                $(SRC_DIR)/ConfigValidator.cpp
+                $(SRC_DIR)/ConfigValidator.cpp \
+                $(SRC_DIR)/Request.cpp
 
 OBJ         =   $(SRC:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 
-GREEN       =   \033[0;32m
-RED         =   \033[0;31m
-RESET       =   \033[0;30m
+INCLUDES    =   -I$(INC_DIR)
+
+GREEN       =   \033[1;32m
+YELLOW      =   \033[1;33m
+RESET       =   \033[0m
+
 
 all: $(NAME)
 
 $(NAME): $(OBJ)
+	@echo "$(YELLOW)Linking object files to create binary...$(RESET)"
 	$(CC) $(CFLAGS) $(OBJ) -o $(NAME)
-	@echo "$(GREEN)[SUCCESS] $(NAME) compiled successfully!$(RESET)"
+	@echo "$(GREEN)✔ Webserv compiled successfully!$(RESET)"
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(OBJ_DIR)
-	$(CC) $(CFLAGS) -I $(INC_DIR) -c $< -o $@
+	@echo "$(YELLOW)Compiling: $<...$(RESET)"
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
+	@echo "$(YELLOW)Cleaning object binaries...$(RESET)"
 	@rm -rf $(OBJ_DIR)
-	@echo "$(RED)[CLEAN] Object files removed.$(RESET)"
+	@echo "$(GREEN)✔ Object files removed.$(RESET)"
 
 fclean: clean
+	@echo "$(YELLOW)Purging full executable...$(RESET)"
 	@rm -f $(NAME)
-	@echo "$(RED)[FCLEAN] Executable $(NAME) removed.$(RESET)"
+	@echo "$(GREEN)✔ Executable purged clean.$(RESET)"
 
 re: fclean all
 
