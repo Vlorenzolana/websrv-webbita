@@ -1,0 +1,17 @@
+#!/bin/bash
+
+echo "Content-Type: text/html"
+echo ""
+echo "<html><body>"
+echo "<h1>Bash CGI Script Test</h1>"
+echo "<p>This Bash script is running on the web server!</p>"
+echo "<h2>Environment Information:</h2>"
+echo "<ul>"
+echo "<li>REQUEST_METHOD: $REQUEST_METHOD</li>"
+echo "<li>PATH_INFO: $PATH_INFO</li>"
+echo "<li>QUERY_STRING: $QUERY_STRING</li>"
+echo "<li>Hostname: $(hostname)</li>"
+echo "<li>User: $(whoami)</li>"
+echo "</ul>"
+echo "<p>Script executed successfully!</p>"
+echo "</body></html>"
