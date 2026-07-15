@@ -11,96 +11,69 @@
 class Server
 {
 	public:
-		// OJO: el constructor ahora recibe el ServerConfig completo,
-		// no solo el puerto, porque el enrutamiento necesita las
-		// locations, el root, error_pages, client_max_body_size, etc.
+		// El server se construye con toda la configuración del bloque `server`.
+		// Así puede usar puertos, locations, root, errores y límites de body.
 		Server(const ServerConfig& config);
 		~Server();
 
+		// Abre socket, configura epoll y deja el server listo para escuchar.
 		void init();
+		// Bucle principal de eventos: acepta clientes y procesa requests.
 		void run();
 
 	private:
+		// File descriptors del socket de escucha y del epoll.
 		int          _serverFd;
 		int          _epollFd;
+		// Puerto asociado a este virtual host.
 		int          _port;
+		// Configuración completa del server actual.
 		ServerConfig _config;
 
+		// Acepta un cliente nuevo y lo registra en epoll.
 		void acceptClient();
+		// Lee, parsea y responde a una conexión concreta.
 		void handleClient(int clientFd);
 
 		// --- Routing ---
+		// Busca el location más específico que encaja con la ruta.
 		const LocationConfig* _matchLocation(const std::string& path) const;
+		// Comprueba si el método HTTP está permitido en ese location.
 		bool _isMethodAllowed(const LocationConfig* loc, const std::string& method) const;
+		// Convierte una ruta URL a una ruta real del filesystem.
 		std::string _resolvePath(const LocationConfig* loc, const std::string& reqPath) const;
+		// Protección simple contra intentos de `..` en la ruta.
 		bool _hasPathTraversal(const std::string& path) const;
 
 		// --- Handlers de metodo ---
+		// Atiende GET sirviendo ficheros, índices o autoindex.
 		void _handleGet(int clientFd, const Request& request, const LocationConfig* loc);
+		// Atiende POST, CGI o subida de archivos.
 		void _handlePost(int clientFd, const Request& request, const LocationConfig* loc);
+		// Atiende DELETE eliminando recursos regulares.
 		void _handleDelete(int clientFd, const Request& request, const LocationConfig* loc);
 
 		// --- CGI Support ---
+		// Detecta si una ruta parece un script CGI por extensión.
 		bool _isCGIRequest(const std::string& fullPath) const;
+		// Ejecuta el script CGI y devuelve la respuesta al cliente.
 		void _handleCGI(int clientFd, const Request& request, const LocationConfig* loc, const std::string& fullPath);
 
 		// --- Helpers de respuesta ---
+		// Construye y envía una respuesta HTTP genérica.
 		void _sendResponse(int clientFd, int code, const std::string& statusText,
 			const std::string& contentType, const std::string& body,
 			const std::map<std::string, std::string>& extraHeaders = std::map<std::string, std::string>());
+		// Envía una respuesta de error usando página personalizada si existe.
 		void _sendErrorResponse(int clientFd, int code);
+		// Genera un HTML simple por defecto para errores.
 		std::string _defaultErrorBody(int code, const std::string& statusText) const;
+		// Traduce códigos HTTP a texto humano legible.
 		std::string _statusText(int code) const;
+		// Adivina el MIME type a partir de la extensión.
 		std::string _getMimeType(const std::string& path) const;
+		// Crea una página HTML de listado de directorio.
 		std::string _buildAutoindexPage(const std::string& dirPath, const std::string& reqPath) const;
 };
 
 #endif
-
-/* #ifndef SERVER_HPP
-#define SERVER_HPP
-
-#include "Config.hpp"
-#include <sys/epoll.h>
-#include <string>
-
-class Request;
-
-class Server
-{
-private:
-    int _serverFd;
-    int _epollFd;
-    int _port;
-    ServerConfig _config;
-
-public:
-    Server(int port);
-    Server(const ServerConfig& config);
-    ~Server();
-
-    void init();
-    void run();
-
-private:
-    void acceptClient();
-    void handleClient(int clientFd);
-
-    std::string _handleGet(const Request& request) const;
-    std::string _handlePost(const Request& request) const;
-    std::string _handleDelete(const Request& request) const;
-
-    const LocationConfig* _findBestLocation(const std::string& requestPath) const;
-    bool _isMethodAllowed(const std::string& requestPath, const std::string& method) const;
-    std::string _buildResponse(int statusCode, const std::string& contentType, const std::string& body) const;
-    bool _sendAll(int clientFd, const std::string& response) const;
-    std::string _readFile(const std::string& path) const;
-    std::string _listDirectory(const std::string& path, const std::string& requestPath) const;
-    std::string _resolvePath(const std::string& requestPath, const LocationConfig*& location) const;
-    std::string _guessContentType(const std::string& path) const;
-    bool _writeUploadFile(const std::string& directory, const std::string& body, std::string& savedPath) const;
-    bool _removeResource(const std::string& path) const;
-};
-
-#endif
- */

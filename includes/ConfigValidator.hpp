@@ -12,11 +12,11 @@ public:
     ConfigValidator();
     ~ConfigValidator();
 
-    // Main entry point for semantic validation
+    // Valida la semántica de todos los servers y completa valores por defecto.
     void validateAndNormalize(std::vector<ServerConfig>& servers);
 
 private:
-    // Modular sub-validations
+    // Subvalidaciones internas separadas por responsabilidad.
     void _hydrateAndCheckServer(ServerConfig& server);
     void _checkDuplicateServers(const std::vector<ServerConfig>& servers, size_t currentIndex);
     void _validateAndNormalizeLocations(ServerConfig& server);

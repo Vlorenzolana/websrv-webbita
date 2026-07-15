@@ -12,10 +12,11 @@ public:
     ConfigParser();
     ~ConfigParser();
 
+    // Lee el archivo de configuración y devuelve todos los bloques `server`.
     std::vector<ServerConfig> parseFile(const std::string& filename);
 
 private:
-    // Core engine for the parsing state machine
+    // Estados del parser: fuera de server, dentro de server, o dentro de location.
     enum ParsingState
     {
         GLOBAL,
@@ -23,25 +24,25 @@ private:
         LOCATION
     };
 
-    // Pure static utilities for string manipulation
+    // Utilidades básicas de limpieza y tokenización.
     static std::string _trim(const std::string& str);
     static std::vector<std::string> _split(const std::string& str);
 
-    // Main context/scope managers for the state machine
+    // Controlan cómo se interpretan las líneas según el contexto actual.
     void _handleGLOBAL(ParsingState& state, const std::vector<std::string>& tokens, const std::string& line);
     void _handleSERVER(ParsingState& state, ServerConfig& current_server, LocationConfig& current_location, const std::vector<std::string>& tokens, const std::string& line, std::vector<ServerConfig>& servers);
     void _handleLOCATION(ParsingState& state, ServerConfig& current_server, LocationConfig& current_location, const std::vector<std::string>& tokens, const std::string& line);
 
-    // Internal directive token processors
+    // Procesan directivas individuales de server y location.
     void _processServerLine(ServerConfig& server, const std::string& line);
     void _processLocationLine(LocationConfig& location, const std::string& line);
 
-    // Context-specific modular location parsers
+    // Parsers especializados para directivas de location.
     void _parseLocationMethods(LocationConfig& location, const std::vector<std::string>& tokens);
     void _parseLocationReturn(LocationConfig& location, const std::vector<std::string>& tokens);
     void _parseLocationBasic(LocationConfig& location, const std::vector<std::string>& tokens);
 
-    // Type converters and semantic validators
+    // Conversores numéricos y validaciones de sintaxis.
     int _parsePort(const std::string& value);
     long long _parseLimit(const std::string& value);
     void _parseErrorPage(std::map<int, std::string>& error_pages, const std::string& line);

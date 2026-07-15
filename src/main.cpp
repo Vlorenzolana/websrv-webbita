@@ -42,6 +42,8 @@ int main(int argc, char** argv)
 		ConfigParser parser;
 		std::vector<ServerConfig> servers = parser.parseFile(path);
 
+		// Si el config solo define 1 server, se crea 1 instancia y 1 thread.
+		// Si define varios server blocks, se crea una instancia/thread por cada uno.
 		if (servers.empty())
 		{
 			std::cerr << "Error: No server configurations found" << std::endl;
@@ -51,7 +53,7 @@ int main(int argc, char** argv)
 		std::vector<Server*> serverInstances;
 		std::vector<pthread_t> threads;
 
-		// Crear instancias de Server para cada configuración
+		// Crear una instancia de Server por cada bloque server del config.
 		for (size_t i = 0; i < servers.size(); ++i)
 		{
 			Server* srv = new Server(servers[i]);
@@ -63,7 +65,7 @@ int main(int argc, char** argv)
 
 		std::cout << "\n=== Starting " << serverInstances.size() << " virtual host(s) ===" << std::endl;
 
-		// Crear un thread para cada servidor
+		// Cada Server corre en su propio thread para poder escuchar varios puertos a la vez.
 		for (size_t i = 0; i < serverInstances.size(); ++i)
 		{
 			ServerThreadData* data = new ServerThreadData();
@@ -80,7 +82,8 @@ int main(int argc, char** argv)
 			threads.push_back(thread);
 		}
 
-		// Esperar a que todos los threads terminen
+		// Esperar a que terminen todos los threads: con 1 server, espera uno;
+		// con varios, espera a todos.
 		for (size_t i = 0; i < threads.size(); ++i)
 		{
 			pthread_join(threads[i], NULL);

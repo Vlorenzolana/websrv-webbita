@@ -91,6 +91,8 @@ std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
     file.close();
 
     // Delegate semantic control to the specialized validator class
+    // Aquí ya tenemos todos los server blocks leídos: si hay 1, habrá 1 server;
+    // si hay varios, cada bloque se convertirá en una instancia distinta.
     ConfigValidator validator;
     validator.validateAndNormalize(servers);
 
@@ -117,6 +119,7 @@ void ConfigParser::_handleSERVER(ParsingState& state, ServerConfig& current_serv
 {
     if (tokens[0] == "}")
     {
+        // Cerramos un bloque server completo y lo guardamos en el vector final.
         servers.push_back(current_server);
         current_server = ServerConfig();
         state = GLOBAL;
@@ -164,7 +167,8 @@ void ConfigParser::_processServerLine(ServerConfig& server, const std::string& l
         throw std::runtime_error("Missing ';' at the end of directive: " + line);
     }
 
-    if (tokens[0] == "listen" && tokens.size() == 2)
+    // `listen` es la sintaxis principal; `port` queda como alias para configs antiguas.
+    if ((tokens[0] == "listen" || tokens[0] == "port") && tokens.size() == 2)
     {
         server.port = _parsePort(tokens[1]);
     }

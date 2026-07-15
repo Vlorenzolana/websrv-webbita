@@ -97,7 +97,7 @@ bool Request::parse(const std::string& raw_request)
 
     try
     {
-        // Line-by-line processing loop for metadata text sections (\n delimited)
+        // Leemos cabecera y request-line primero; si hay body, se procesa después.
         while (_parsing_state == PARSE_REQUEST_LINE || _parsing_state == PARSE_HEADERS)
         {
             size_t eol = _raw_buffer.find("\n");
@@ -125,7 +125,7 @@ bool Request::parse(const std::string& raw_request)
             {
                 if (line.empty())
                 {
-                    // An empty line signals the boundary between headers and message body
+                    // Línea vacía = fin de headers; a partir de aquí puede venir body.
                     std::string len_str = getHeaderValue("Content-Length");
                     if (!len_str.empty())
                     {
@@ -151,6 +151,7 @@ bool Request::parse(const std::string& raw_request)
         // Processing block for extracting payload content matching Content-Length thresholds
         if (_parsing_state == PARSE_BODY)
         {
+            // Esperamos hasta tener todo el body indicado por Content-Length.
             if (_raw_buffer.size() >= _content_length)
             {
                 _body = _raw_buffer.substr(0, _content_length);

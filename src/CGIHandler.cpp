@@ -12,6 +12,7 @@ CGIHandler::~CGIHandler() {}
 
 char **CGIHandler::_mapToEnvp()
 {
+	// Convertimos el mapa de entorno a `char**` para poder usar execve().
 	char **envp = new char*[_env_map.size() + 1];
 	size_t i = 0;
 	
@@ -28,6 +29,7 @@ char **CGIHandler::_mapToEnvp()
 
 int CGIHandler::execute(const Request &request, const std::string &uploadPath)
 {
+	// Preparamos variables CGI estándar para que el script conozca la request.
 	_env_map["REQUEST_METHOD"] = request.getMethod();
 	_env_map["PATH_INFO"] = request.getPath();
 	_env_map["QUERY_STRING"] = request.getQueryString();
@@ -53,6 +55,7 @@ int CGIHandler::execute(const Request &request, const std::string &uploadPath)
 
 	if (pid == 0) // Child
 	{
+		// En el hijo: conectamos stdin/stdout con pipes y ejecutamos el intérprete.
 		dup2(pipe_in[0], STDIN_FILENO);
 		dup2(pipe_out[1], STDOUT_FILENO);
 		
@@ -76,6 +79,7 @@ int CGIHandler::execute(const Request &request, const std::string &uploadPath)
 	}
 	else // Parent
 	{
+		// En el padre: enviamos el body al script y dejamos el output listo para leer.
 		close(pipe_in[0]);
 		close(pipe_out[1]);
 

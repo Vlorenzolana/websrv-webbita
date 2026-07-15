@@ -13,7 +13,8 @@ private:
 	std::string _interpreter_path;
 	std::map<std::string, std::string> _env_map;
 
-	// Map to array
+	// Convierte el mapa de variables de entorno en un array tipo `char**`
+	// para poder pasarlo a `execve()`.
 	char **_mapToEnvp();
 
 public:

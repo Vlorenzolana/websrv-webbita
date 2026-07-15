@@ -20,6 +20,7 @@ void ConfigValidator::validateAndNormalize(std::vector<ServerConfig>& servers)
         throw std::runtime_error("No server configurations found.");
     }
 
+    // Validamos cada server por separado: defaults, duplicados y locations.
     for (size_t i = 0; i < servers.size(); ++i)
     {
         _hydrateAndCheckServer(servers[i]);
@@ -30,7 +31,7 @@ void ConfigValidator::validateAndNormalize(std::vector<ServerConfig>& servers)
 
 void ConfigValidator::_hydrateAndCheckServer(ServerConfig& server)
 {
-    // Hydrate default values if missing
+    // Si faltan valores obligatorios, ponemos defaults razonables.
     if (server.server_name.empty())
     {
         server.server_name = "localhost";
@@ -72,13 +73,13 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
     {
         LocationConfig& loc = server.locations[k];
 
-        // Hydrate default HTTP methods if block is empty
+        // Si el location no define métodos, asumimos GET por defecto.
         if (loc.allowed_methods.empty())
         {
             loc.allowed_methods.push_back("GET");
         }
 
-        // Route root synchronization: Inherit from server root if undefined
+        // Si no hay root en el location, hereda el root del server.
         if (loc.root_directory.empty())
         {
             loc.root_directory = server.root_directory;
@@ -91,7 +92,7 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
             }
         }
 
-        // Check upload folder directory availability if specified
+        // Si se define upload_path, comprobamos que exista.
         if (!loc.upload_path.empty())
         {
             if (access(loc.upload_path.c_str(), F_OK) != 0)
@@ -100,7 +101,7 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
             }
         }
 
-        // Validate redirections
+        // Si hay redirección, validamos que sea coherente.
         if (loc.return_code != 0)
         {
             _validateLocationRedirection(loc);
