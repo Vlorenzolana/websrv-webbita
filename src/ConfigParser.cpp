@@ -16,279 +16,238 @@ ConfigParser::~ConfigParser()
 
 std::string ConfigParser::_trim(const std::string& str)
 {
-    size_t first = str.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos)
-    {
-        return "";
-    }
-    size_t last = str.find_last_not_of(" \t\r\n");
-    return str.substr(first, (last - first + 1));
+	size_t first = str.find_first_not_of(" \t\r\n");
+	if (first == std::string::npos)
+		return "";
+
+	size_t last = str.find_last_not_of(" \t\r\n");
+	return str.substr(first, (last - first + 1));
 }
 
 std::vector<std::string> ConfigParser::_split(const std::string& str)
 {
-    std::vector<std::string> tokens;
-    std::stringstream ss(str);
-    std::string token;
-    
-    while (ss >> token)
-    {
-        tokens.push_back(token);
-    }
-    return tokens;
+	std::vector<std::string> tokens;
+	std::stringstream ss(str);
+	std::string token;
+	
+	while (ss >> token)
+		tokens.push_back(token);
+
+	return tokens;
 }
 
 std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
 {
-    std::vector<ServerConfig> servers;
-    std::ifstream file(filename.c_str());
+	std::vector<ServerConfig> servers;
+	std::ifstream file(filename.c_str());
 
-    if (!file.is_open())
-    {
-        throw std::runtime_error("Could not open config file: " + filename);
-    }
+	if (!file.is_open())
+		throw std::runtime_error("Could not open config file: " + filename);
 
-    std::string line;
-    ParsingState state = GLOBAL;
+	std::string line;
+	ParsingState state = GLOBAL;
 
-    ServerConfig current_server;
-    LocationConfig current_location;
+	ServerConfig current_server;
+	LocationConfig current_location;
 
-    while (std::getline(file, line))
-    {
-        line = _trim(line);
-        if (line.empty() || line[0] == '#')
-        {
-            continue;
-        }
+	while (std::getline(file, line))
+	{
+		line = _trim(line);
+		if (line.empty() || line[0] == '#')
+			continue;
 
-        std::vector<std::string> tokens = _split(line);
-        if (tokens.empty())
-        {
-            continue;
-        }
 
-        if (state == GLOBAL)
-        {
-            _handleGLOBAL(state, tokens, line);
-        }
-        else if (state == SERVER)
-        {
-            _handleSERVER(state, current_server, current_location, tokens, line, servers);
-        }
-        else if (state == LOCATION)
-        {
-            _handleLOCATION(state, current_server, current_location, tokens, line);
-        }
-    }
+		size_t semi_pos = line.find(';');
+		if (semi_pos != std::string::npos)
+		{
+			while (semi_pos > 0 && (line[semi_pos - 1] == ' ' || line[semi_pos - 1] == '\t'))
+			{
+				line.erase(semi_pos - 1, 1);
+				semi_pos--;
+			}
+		}
 
-    if (state != GLOBAL)
-    {
-        file.close();
-        throw std::runtime_error("Unclosed curly braces at the end of file.");
-    }
 
-    file.close();
+		std::vector<std::string> tokens = _split(line);
+		if (tokens.empty())
+			continue;
 
-    // Delegate semantic control to the specialized validator class
-    // Aquí ya tenemos todos los server blocks leídos: si hay 1, habrá 1 server;
-    // si hay varios, cada bloque se convertirá en una instancia distinta.
-    ConfigValidator validator;
-    validator.validateAndNormalize(servers);
+		if (state == GLOBAL)
+			_handleGLOBAL(state, tokens, line);
 
-    return servers;
+		else if (state == SERVER)
+			_handleSERVER(state, current_server, current_location, tokens, line, servers);
+
+		else if (state == LOCATION)
+			_handleLOCATION(state, current_server, current_location, tokens, line);
+	}
+
+	if (state != GLOBAL)
+	{
+		file.close();
+		throw std::runtime_error("Unclosed curly braces at the end of file.");
+	}
+
+	file.close();
+
+	// Delegate semantic control to the specialized validator class
+	ConfigValidator validator;
+	validator.validateAndNormalize(servers);
+
+	return servers;
 }
 
 void ConfigParser::_handleGLOBAL(ParsingState& state, const std::vector<std::string>& tokens, const std::string& line)
 {
-    if (tokens[0] == "server" && tokens.size() == 2 && tokens[1] == "{")
-    {
-        state = SERVER;
-    }
-    else if (tokens[0] == "server" && tokens.size() == 1)
-    {
-        state = SERVER;
-    }
-    else
-    {
-        throw std::runtime_error("Config outside server block: " + line);
-    }
+	if (tokens[0] == "server" && tokens.size() == 2 && tokens[1] == "{")
+		state = SERVER;
+
+	else if (tokens[0] == "server" && tokens.size() == 1)
+		state = SERVER;
+
+	else
+		throw std::runtime_error("Config outside server block: " + line);
+
 }
 
 void ConfigParser::_handleSERVER(ParsingState& state, ServerConfig& current_server, LocationConfig& current_location, const std::vector<std::string>& tokens, const std::string& line, std::vector<ServerConfig>& servers)
 {
-    if (tokens[0] == "}")
-    {
-        // Cerramos un bloque server completo y lo guardamos en el vector final.
-        servers.push_back(current_server);
-        current_server = ServerConfig();
-        state = GLOBAL;
-    }
-    else if (tokens[0] == "location")
-    {
-        if (tokens.size() < 3 || tokens[tokens.size() - 1] != "{")
-        {
-            throw std::runtime_error("Invalid location syntax: " + line);
-        }
-        current_location = LocationConfig();
-        current_location.path = tokens[1];
-        state = LOCATION;
-    }
-    else
-    {
-        _processServerLine(current_server, line);
-    }
+	if (tokens[0] == "}")
+	{
+		servers.push_back(current_server);
+		current_server = ServerConfig();
+		state = GLOBAL;
+	}
+	else if (tokens[0] == "location")
+	{
+		if (tokens.size() < 3 || tokens[tokens.size() - 1] != "{")
+			throw std::runtime_error("Invalid location syntax: " + line);
+
+		current_location = LocationConfig();
+		current_location.path = tokens[1];
+		state = LOCATION;
+	}
+	else
+		_processServerLine(current_server, line);
 }
 
 void ConfigParser::_handleLOCATION(ParsingState& state, ServerConfig& current_server, LocationConfig& current_location, const std::vector<std::string>& tokens, const std::string& line)
 {
-    if (tokens[0] == "}")
-    {
-        current_server.locations.push_back(current_location);
-        state = SERVER;
-    }
-    else
-    {
-        _processLocationLine(current_location, line);
-    }
+	if (tokens[0] == "}")
+	{
+		current_server.locations.push_back(current_location);
+		state = SERVER;
+	}
+	else
+		_processLocationLine(current_location, line);
 }
 
 void ConfigParser::_processServerLine(ServerConfig& server, const std::string& line)
 {
-    std::vector<std::string> tokens = _split(line);
-    if (tokens.empty())
-    {
-        return;
-    }
+	std::vector<std::string> tokens = _split(line);
+	if (tokens.empty())
+		return;
+	std::string lastToken = tokens[tokens.size() - 1];
+	if (lastToken[lastToken.size() - 1] != ';')
+		throw std::runtime_error("Missing ';' at the end of directive: " + line);
 
-    std::string lastToken = tokens[tokens.size() - 1];
-    if (lastToken[lastToken.size() - 1] != ';')
-    {
-        throw std::runtime_error("Missing ';' at the end of directive: " + line);
-    }
+	if (tokens.size() < 2)
+		throw std::runtime_error("Invalid syntax: Directive lacks arguments in line: " + line);
 
-    // `listen` es la sintaxis principal; `port` queda como alias para configs antiguas.
-    if ((tokens[0] == "listen" || tokens[0] == "port") && tokens.size() == 2)
-    {
-        server.port = _parsePort(tokens[1]);
-    }
-    else if (tokens[0] == "server_name" && tokens.size() == 2)
-    {
-        server.server_name = tokens[1].substr(0, tokens[1].size() - 1);
-    }
-    else if (tokens[0] == "root" && tokens.size() == 2)
-    {
-        server.root_directory = tokens[1].substr(0, tokens[1].size() - 1);
-    }
-    else if (tokens[0] == "client_max_body_size" && tokens.size() == 2)
-    {
-        server.client_max_body_size = _parseLimit(tokens[1]);
-    }
-    else if (tokens[0] == "error_page")
-    {
-        _parseErrorPage(server.error_pages, line);
-    }
-    else
-    {
-        throw std::runtime_error("Unknown or invalid server directive: " + tokens[0]);
-    }
+	if (tokens[0] == "listen" && tokens.size() == 2)
+		server.port = _parsePort(tokens[1]);
+	
+	else if (tokens[0] == "server_name" && tokens.size() == 2)
+		server.server_name = tokens[1].substr(0, tokens[1].size() - 1);
+	
+	else if (tokens[0] == "root" && tokens.size() == 2)
+		server.root_directory = tokens[1].substr(0, tokens[1].size() - 1);
+	
+	else if (tokens[0] == "client_max_body_size" && tokens.size() == 2)
+		server.client_max_body_size = _parseLimit(tokens[1]);
+	
+	else if (tokens[0] == "error_page")
+		_parseErrorPage(server.error_pages, line);
+	
+	else
+		throw std::runtime_error("Unknown or invalid server directive: " + tokens[0]);
 }
 
 void ConfigParser::_processLocationLine(LocationConfig& location, const std::string& line)
 {
     std::vector<std::string> tokens = _split(line);
     if (tokens.empty())
-    {
         return;
-    }
-
     std::string lastToken = tokens[tokens.size() - 1];
     if (lastToken[lastToken.size() - 1] != ';')
-    {
         throw std::runtime_error("Missing ';' at the end of directive: " + line);
-    }
+
+    if (tokens.size() < 2)
+        throw std::runtime_error("Invalid syntax: Location directive lacks arguments in line: " + line);
 
     if (tokens[0] == "allowed_methods")
-    {
         _parseLocationMethods(location, tokens);
-    }
-    else if (tokens[0] == "return")
-    {
+	
+	else if (tokens[0] == "return")
         _parseLocationReturn(location, tokens);
-    }
-    else if (tokens[0] == "root" || tokens[0] == "index" || tokens[0] == "autoindex" || tokens[0] == "upload_path")
-    {
+    
+	else if (tokens[0] == "root" || tokens[0] == "index" || tokens[0] == "autoindex" || tokens[0] == "upload_path")
         _parseLocationBasic(location, tokens);
-    }
-    else
-    {
+
+	else
         throw std::runtime_error("Unknown or invalid location directive: " + tokens[0]);
-    }
 }
 
 void ConfigParser::_parseLocationMethods(LocationConfig& location, const std::vector<std::string>& tokens)
 {
-    if (tokens.size() < 2)
-    {
-        throw std::runtime_error("Empty allowed_methods directive.");
-    }
-    
-    for (size_t i = 1; i < tokens.size(); ++i)
-    {
-        std::string method = tokens[i];
-        if (i == tokens.size() - 1)
-        {
-            method = method.substr(0, method.size() - 1);
-        }
-        
-        if (method != "GET" && method != "POST" && method != "DELETE")
-        {
-            throw std::runtime_error("Invalid HTTP method: " + method);
-        }
-        location.allowed_methods.push_back(method);
-    }
+	if (tokens.size() < 2)
+		throw std::runtime_error("Empty allowed_methods directive.");
+	
+	for (size_t i = 1; i < tokens.size(); ++i)
+	{
+		std::string method = tokens[i];
+		if (i == tokens.size() - 1)
+			method = method.substr(0, method.size() - 1);
+		
+		if (method != "GET" && method != "POST" && method != "DELETE")
+			throw std::runtime_error("Invalid HTTP method: " + method);
+
+		location.allowed_methods.push_back(method);
+	}
 }
 
 void ConfigParser::_parseLocationReturn(LocationConfig& location, const std::vector<std::string>& tokens)
 {
-    if (tokens.size() != 3)
-    {
-        throw std::runtime_error("Invalid return directive syntax.");
-    }
+	if (tokens.size() != 3)
+		throw std::runtime_error("Invalid return directive syntax.");
 
-    std::stringstream ss(tokens[1]);
-    if (!(ss >> location.return_code))
-    {
-        throw std::runtime_error("Invalid redirection code.");
-    }
-    location.return_url = tokens[2].substr(0, tokens[2].size() - 1);
+	std::stringstream ss(tokens[1]);
+	if (!(ss >> location.return_code))
+		throw std::runtime_error("Invalid redirection code.");
+
+	location.return_url = tokens[2].substr(0, tokens[2].size() - 1);
 }
 
 void ConfigParser::_parseLocationBasic(LocationConfig& location, const std::vector<std::string>& tokens)
 {
     if (tokens[0] == "root" && tokens.size() == 2)
-    {
         location.root_directory = tokens[1].substr(0, tokens[1].size() - 1);
-    }
+
     else if (tokens[0] == "upload_path" && tokens.size() == 2)
-    {
         location.upload_path = tokens[1].substr(0, tokens[1].size() - 1);
-    }
+
     else if (tokens[0] == "autoindex" && tokens.size() == 2)
     {
         std::string val = tokens[1].substr(0, tokens[1].size() - 1);
         if (val == "on")
-        {
             location.autoindex = true;
-        }
+
         else if (val == "off")
-        {
             location.autoindex = false;
-        }
+
         else
-        {
             throw std::runtime_error("Invalid autoindex value (use on/off): " + val);
-        }
+
     }
     else if (tokens[0] == "index")
     {
@@ -296,9 +255,8 @@ void ConfigParser::_parseLocationBasic(LocationConfig& location, const std::vect
         {
             std::string idx = tokens[i];
             if (i == tokens.size() - 1)
-            {
                 idx = idx.substr(0, idx.size() - 1);
-            }
+
             location.index_files.push_back(idx);
         }
     }
@@ -306,60 +264,48 @@ void ConfigParser::_parseLocationBasic(LocationConfig& location, const std::vect
 
 int ConfigParser::_parsePort(const std::string& value)
 {
-    std::string cleanValue = value;
-    if (!cleanValue.empty() && cleanValue[cleanValue.size() - 1] == ';')
-    {
-        cleanValue = cleanValue.substr(0, cleanValue.size() - 1);
-    }
+	std::string cleanValue = value;
+	if (!cleanValue.empty() && cleanValue[cleanValue.size() - 1] == ';')
+		cleanValue = cleanValue.substr(0, cleanValue.size() - 1);
 
-    std::stringstream ss(cleanValue);
-    int port;
-    if (!(ss >> port) || !ss.eof() || port < 1 || port > 65535)
-    {
-        throw std::runtime_error("Invalid port value: " + value);
-    }
-    return port;
+	std::stringstream ss(cleanValue);
+	int port;
+	if (!(ss >> port) || !ss.eof() || port < 1 || port > 65535)
+		throw std::runtime_error("Invalid port value: " + value);
+
+	return port;
 }
 
 long long ConfigParser::_parseLimit(const std::string& value)
 {
-    std::string cleanValue = value;
-    if (!cleanValue.empty() && cleanValue[cleanValue.size() - 1] == ';')
-    {
-        cleanValue = cleanValue.substr(0, cleanValue.size() - 1);
-    }
+	std::string cleanValue = value;
+	if (!cleanValue.empty() && cleanValue[cleanValue.size() - 1] == ';')
+		cleanValue = cleanValue.substr(0, cleanValue.size() - 1);
 
-    std::stringstream ss(cleanValue);
-    long long limit;
-    if (!(ss >> limit) || !ss.eof() || limit < 0)
-    {
-        throw std::runtime_error("Invalid client_max_body_size value: " + value);
-    }
-    return limit;
+	std::stringstream ss(cleanValue);
+	long long limit;
+	if (!(ss >> limit) || !ss.eof() || limit < 0)
+		throw std::runtime_error("Invalid client_max_body_size value: " + value);
+
+	return limit;
 }
 
 void ConfigParser::_parseErrorPage(std::map<int, std::string>& error_pages, const std::string& line)
 {
-    std::vector<std::string> tokens = _split(line);
-    if (tokens.size() < 3)
-    {
-        throw std::runtime_error("Invalid error_page directive: " + line);
-    }
+	std::vector<std::string> tokens = _split(line);
+	if (tokens.size() < 3)
+		throw std::runtime_error("Invalid error_page directive: " + line);
 
-    std::string path = tokens[tokens.size() - 1];
-    if (!path.empty() && path[path.size() - 1] == ';')
-    {
-        path = path.substr(0, path.size() - 1);
-    }
+	std::string path = tokens[tokens.size() - 1];
+	if (!path.empty() && path[path.size() - 1] == ';')
+		path = path.substr(0, path.size() - 1);
 
-    for (size_t i = 1; i < tokens.size() - 1; ++i)
-    {
-        std::stringstream ss(tokens[i]);
-        int code;
-        if (!(ss >> code) || code < 300 || code > 599)
-        {
-            throw std::runtime_error("Invalid error code: " + tokens[i]);
-        }
-        error_pages[code] = path;
-    }
+	for (size_t i = 1; i < tokens.size() - 1; ++i)
+	{
+		std::stringstream ss(tokens[i]);
+		int code;
+		if (!(ss >> code) || code < 300 || code > 599)
+			throw std::runtime_error("Invalid error code: " + tokens[i]);
+		error_pages[code] = path;
+	}
 }

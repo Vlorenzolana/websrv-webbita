@@ -92,32 +92,24 @@ void Request::_extractQueryString()
 // Incremental parsing coordinator managing the network buffer data stream
 bool Request::parse(const std::string& raw_request)
 {
-    // Accumulate incoming data stream directly into the dynamic storage pool
     _raw_buffer += raw_request;
-
     try
     {
-        // Leemos cabecera y request-line primero; si hay body, se procesa después.
         while (_parsing_state == PARSE_REQUEST_LINE || _parsing_state == PARSE_HEADERS)
         {
             size_t eol = _raw_buffer.find("\n");
             if (eol == std::string::npos)
-            {
-                return false; // Line fragment encountered, yielding back to network event loop
-            }
+                return false;
 
             std::string line = _raw_buffer.substr(0, eol);
             _raw_buffer.erase(0, eol + 1);
 
-            // Strip trailing carriage return (\r) characters if present
             if (!line.empty() && line[line.size() - 1] == '\r')
-            {
                 line.erase(line.size() - 1);
-            }
 
             if (_parsing_state == PARSE_REQUEST_LINE)
             {
-                if (line.empty()) continue; // Skip premature empty lines
+                if (line.empty()) continue;
                 _processRequestLine(line);
                 _parsing_state = PARSE_HEADERS;
             }
@@ -125,7 +117,6 @@ bool Request::parse(const std::string& raw_request)
             {
                 if (line.empty())
                 {
-                    // Línea vacía = fin de headers; a partir de aquí puede venir body.
                     std::string len_str = getHeaderValue("Content-Length");
                     if (!len_str.empty())
                     {
@@ -135,28 +126,30 @@ bool Request::parse(const std::string& raw_request)
                     }
                     else
                     {
-                        // No body metrics declared, transaction parsing completes immediately
+                        if (_method == "POST")
+                        {
+                            _error_code = 400;
+                            throw std::runtime_error("Bad Request: POST method requires Content-Length header.");
+                        }
+
                         _parsing_state = PARSE_COMPLETE;
                         _is_parsed = true;
                         return true;
                     }
                 }
                 else
-                {
                     _processHeaderLine(line);
-                }
+
             }
         }
 
-        // Processing block for extracting payload content matching Content-Length thresholds
         if (_parsing_state == PARSE_BODY)
         {
-            // Esperamos hasta tener todo el body indicado por Content-Length.
             if (_raw_buffer.size() >= _content_length)
             {
                 _body = _raw_buffer.substr(0, _content_length);
-                _raw_buffer.erase(0, _content_length); // Purge extracted payload from buffer
-                
+                _raw_buffer.erase(0, _content_length);
+                                
                 _parsing_state = PARSE_COMPLETE;
                 _is_parsed = true;
                 return true;
@@ -165,14 +158,14 @@ bool Request::parse(const std::string& raw_request)
     }
     catch (const std::exception& e)
     {
-        // General fallback handler capturing internal parsing faults gracefully
         _parsing_state = PARSE_COMPLETE;
         _is_parsed = true;
-        if (_error_code == 0) _error_code = 400; // Default to Bad Request if unspecified
+        if (_error_code == 0) 
+            _error_code = 400;
+
         std::cerr << "[REQUEST ERROR] " << e.what() << std::endl;
         return true; 
     }
-
     return (_parsing_state == PARSE_COMPLETE);
 }
 

@@ -16,9 +16,7 @@ ConfigValidator::~ConfigValidator()
 void ConfigValidator::validateAndNormalize(std::vector<ServerConfig>& servers)
 {
     if (servers.empty())
-    {
         throw std::runtime_error("No server configurations found.");
-    }
 
     // Validamos cada server por separado: defaults, duplicados y locations.
     for (size_t i = 0; i < servers.size(); ++i)
@@ -33,13 +31,10 @@ void ConfigValidator::_hydrateAndCheckServer(ServerConfig& server)
 {
     // Si faltan valores obligatorios, ponemos defaults razonables.
     if (server.server_name.empty())
-    {
         server.server_name = "localhost";
-    }
+
     if (server.root_directory.empty())
-    {
         server.root_directory = "./www";
-    }
 
     // Accessibility checks for Server Root
     if (access(server.root_directory.c_str(), F_OK) != 0)
@@ -75,37 +70,24 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
 
         // Si el location no define métodos, asumimos GET por defecto.
         if (loc.allowed_methods.empty())
-        {
             loc.allowed_methods.push_back("GET");
-        }
 
         // Si no hay root en el location, hereda el root del server.
         if (loc.root_directory.empty())
-        {
             loc.root_directory = server.root_directory;
-        }
+
         else
-        {
             if (access(loc.root_directory.c_str(), F_OK) != 0 || access(loc.root_directory.c_str(), R_OK) != 0)
-            {
                 throw std::runtime_error("Location root path invalid or inaccessible: " + loc.root_directory);
-            }
-        }
 
         // Si se define upload_path, comprobamos que exista.
         if (!loc.upload_path.empty())
-        {
             if (access(loc.upload_path.c_str(), F_OK) != 0)
-            {
                 throw std::runtime_error("Location upload path does not exist: " + loc.upload_path);
-            }
-        }
 
         // Si hay redirección, validamos que sea coherente.
         if (loc.return_code != 0)
-        {
             _validateLocationRedirection(loc);
-        }
     }
 }
 
