@@ -4,20 +4,12 @@
 #include <iostream>
 #include <csignal>
 #include <vector>
-#include <pthread.h>
-
-void* runServer(void* arg)
-{
-    Server* server = static_cast<Server*>(arg);
-
-    server->init();
-    server->run();
-    return NULL;
-}
+#include <sys/wait.h>
+#include <unistd.h>
 
 int main(int argc, char** argv)
 {
-    const char* path = (argc >= 2) ? argv[1] : "www/webserv.conf";
+    const char* path = (argc >= 2) ? argv[1] : "config/minimal_webserv.conf";
     std::signal(SIGPIPE, SIG_IGN);
 
     try
@@ -30,33 +22,32 @@ int main(int argc, char** argv)
 
         std::cout << "=== Starting " << servers_cfg.size() << " virtual host(s) ===" << std::endl;
 
-        std::vector<Server*> servers;
-        std::vector<pthread_t> threads;
+        std::vector<pid_t> pids;
 
-        // Creamos e iniciamos un hilo independiente para cada servidor configurado
+        // Creamos un proceso independiente mediante fork() para cada servidor configurado
         for (size_t i = 0; i < servers_cfg.size(); ++i)
         {
-            Server* server = new Server(servers_cfg[i]);
-            servers.push_back(server);
+            pid_t pid = fork();
+            if (pid < 0)
+                std::cerr << "Error creating process for server on port " << servers_cfg[i].port << std::endl;
 
-            pthread_t thread_id;
-            if (pthread_create(&thread_id, NULL, runServer, server) != 0)
-                std::cerr << "Error creating thread for server on port " << servers_cfg[i].port << std::endl;
-
-            else
+            else if (pid == 0)
             {
-                threads.push_back(thread_id);
+                // Código del proceso hijo: Instancia y arranca su propio servidor aislado
+                Server server(servers_cfg[i]);
+                server.init();
                 std::cout << "Virtual Host initialized - listening on port " << servers_cfg[i].port << std::endl;
+                server.run();
+                return 0;
             }
+            else
+                pids.push_back(pid);
+
         }
 
-        // Esperamos a que los hilos terminen (bucle infinito de ejecución)
-        for (size_t i = 0; i < threads.size(); ++i)
-            pthread_join(threads[i], NULL);
-
-        // Liberación limpia de memoria en caso de salida
-        for (size_t i = 0; i < servers.size(); ++i)
-            delete servers[i];
+        // El proceso padre espera activamente a que todos sus procesos hijos terminen
+        for (size_t i = 0; i < pids.size(); ++i)
+            waitpid(pids[i], NULL, 0);
 
     }
     catch (const std::exception& e)
