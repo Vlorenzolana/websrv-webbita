@@ -1,0 +1,4 @@
+webserv
+srcs/*.o
+www/uploads/*
+!www/uploads/.gitkeep
