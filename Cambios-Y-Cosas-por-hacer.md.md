@@ -217,8 +217,10 @@ El smoke test incluye:
 - Puerto configurable, partiendo de `127.0.0.1:8081` en la configuración real.
 - Peticiones fragmentadas byte a byte.
 - Comprobaciones de `405`, `413`, `501` y `403`.
-- Respuestas de error con páginas personalizadas para `400`, `403`, `404`,
-  `405`, `413`, `414`, `431`, `501` y `505`, además de `500` y `504`.
+- Configuración de páginas personalizadas para `400`, `403`, `404`, `405`,
+  `413`, `414`, `431`, `501` y `505`, además de `500` y `504`; el smoke test
+  verifica explícitamente el cuerpo personalizado de `404` y los códigos de
+  respuesta de varios casos negativos.
 - Prueba de `DELETE` y confirmación de que el archivo se elimina.
 - Pruebas de concurrencia repetidas.
 - Uploads binarios y multipart, transferencia chunked, CGI, timeout `504` y
@@ -232,15 +234,17 @@ All smoke tests passed on port 18080.
 
 ## 2. Verificación realizada
 
-### Evidencia comprobada
+### Comprobado:
 
 - Compilación correcta:
-  - Comando ejecutado: `bash TESTS/build.sh all`
+    - Comando ejecutado: `make`
   - Resultado: se generó el binario `webserv` y la compilación terminó con éxito.
 
 - Funcionalidad básica verificada en ejecución real:
-  - Las peticiones a los puertos 8080, 8081 y 8082 devolvieron HTTP 200.
-  - La ruta CGI respondió correctamente con HTTP 200.
+    - Las peticiones de la prueba smoke se ejecutaron en el puerto configurable
+        `18080` y devolvieron los códigos esperados.
+    - La configuración base usa `127.0.0.1:8081`; el smoke test la adapta al
+        puerto indicado sin modificar el archivo original.
 
 ### Puntos del código que cumplen
 
@@ -262,7 +266,8 @@ All smoke tests passed on port 18080.
 ### Estado final
 
 - ✅ Cumple los puntos principales y más críticos del subject.
-- ⚠️ Los casos extra más específicos, como 405, 413, DELETE, traversal y limpieza completa de procesos hijo, requieren una comprobación adicional más exhaustiva.
+- ⚠️ La comprobación exhaustiva de fugas de descriptores, permisos y algunas
+    variantes de configuración requiere pruebas manuales adicionales.
 
 ## 3. Explicación técnica del parser y del CGI
 
@@ -277,70 +282,32 @@ Qué hace bien:
 - Gestiona errores simples de configuración.
 
 ```cpp
-// Flujo general del parseo: cambia entre GLOBAL, SERVER y LOCATION.
-// El parser está mirando el contexto en el que se encuentra mientras lee el archivo de configuración.
-
-// En la parte global: directivas generales.
-// Dentro de server: se permiten configuraciones del servidor.
-// Dentro de location: se permiten reglas específicas para una ruta concreta.
-
+// srcs/ConfigParser.cpp
 std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
 {
     std::ifstream file(filename.c_str());
-    std::vector<ServerConfig> servers;
-
     if (!file.is_open())
         throw std::runtime_error("Could not open config file: " + filename);
 
-    std::string line;
-    ParsingState state = GLOBAL;
-
-    while (std::getline(file, line))
-    {
-        line = _trim(line);
-        if (line.empty() || line[0] == '#')
-            continue;
-
-        std::vector<std::string> tokens = _split(line);
-        if (tokens.empty())
-            continue;
-
-        if (tokens[0] == "server")
-            state = SERVER;
-        else if (tokens[0] == "location")
-            state = LOCATION;
-        else if (tokens[0] == "}")
-            state = GLOBAL;
-    }
-
+    // Cada línea se normaliza, se tokeniza y se procesa según GLOBAL,
+    // SERVER o LOCATION. La validación semántica se ejecuta al final.
+    // ...
+    ConfigValidator validator;
+    validator.validateAndNormalize(servers);
     return servers;
 }
 ```
 
-#### Código de apoyo que conviene revisar
-
-```cpp
-void ConfigParser::_handleServer(ServerConfig& server, const std::vector<std::string>& tokens, const std::string& line)
-{
-    if (tokens.empty())
-        return;
-
-    if (tokens[0] == "listen" && tokens.size() == 2)
-        server.listen_port = std::atoi(tokens[1].c_str());
-    else if (tokens[0] == "server_name" && tokens.size() == 2)
-        server.server_name = tokens[1];
-    else if (tokens[0] == "root" && tokens.size() == 2)
-        server.root = tokens[1];
-    else if (tokens[0] == "error_page")
-        _parseErrorPage(server.error_pages, line);
-    else
-        throw std::runtime_error("Unknown or invalid server directive: " + tokens[0]);
-}
-```
+El parser real usa `ServerConfig::host`, `ServerConfig::port` y
+`ServerConfig::root_directory`; no usa campos llamados `listen_port` o `root`.
+También comprueba los puntos y coma, directivas duplicadas, rangos de puertos,
+raíces, páginas de error y bloques sin cerrar.
 
 ### 3.2. CGIHandler
 
-Este archivo ejecuta scripts CGI. Su funcionf es crear un entorno correcto para que el script pueda funcionar, capturar su salida y convertirla en una respuesta HTTP.
+Este archivo ejecuta scripts CGI. Su función es crear un entorno correcto para
+que el script pueda funcionar, capturar su salida y convertirla en una respuesta
+HTTP.
 
 Qué hay que mirar:
 - La creación del proceso hijo.
@@ -348,55 +315,9 @@ Qué hay que mirar:
 - La entrada y salida del script.
 - El manejo de errores y respuestas.
 
-```cpp
-int CGIHandler::executeCGI(const std::string& scriptPath)
-{
-    pid_t pid = fork();
-
-    if (pid == 0)
-    {
-        execve(scriptPath.c_str(), argv, envp);
-        exit(1);
-    }
-    else if (pid > 0)
-    {
-        waitpid(pid, &status, 0);
-    }
-
-    return 0;
-}
-```
-
-También es importante pasar variables como:
-
-```cpp
-setenv("REQUEST_METHOD", method.c_str(), 1);
-setenv("QUERY_STRING", query.c_str(), 1);
-setenv("CONTENT_LENGTH", contentLength.c_str(), 1);
-```
-
-#### Comparación simple vs mejorada
-
-Versión simple: solo ejecuta el script.
-
-```cpp
-int CGIHandler::executeCGI(const std::string& scriptPath)
-{
-    pid_t pid = fork();
-
-    if (pid == 0)
-    {
-        execve(scriptPath.c_str(), argv, envp);
-        exit(1);
-    }
-    else if (pid > 0)
-    {
-        waitpid(pid, &status, 0);
-    }
-
-    return 0;
-}
-```
+El método real es `CGIHandler::execute(...)`. Construye un mapa de variables
+CGI (`REQUEST_METHOD`, `QUERY_STRING`, `CONTENT_LENGTH`, `CONTENT_TYPE`, entre
+otras), lo convierte en un `envp` para `execve`, y no usa `setenv`.
 
 Versión mejorada: añade comunicación y control.
 
@@ -412,6 +333,11 @@ if (pipe(outputPipe) < 0)
     return false;
 }
 ```
+
+Después crea el proceso con `fork`, conecta las tuberías mediante `dup2`, hace
+`chdir` al directorio del script y ejecuta el intérprete configurado con
+`execve`. El padre conserva el extremo de escritura de entrada y el de lectura
+de salida para gestionarlos de forma asíncrona con `epoll`.
 
 Versión mejorada: configura los descriptores de fichero.
 
