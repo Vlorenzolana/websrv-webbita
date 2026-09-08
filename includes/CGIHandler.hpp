@@ -35,7 +35,6 @@ private:
 
     // File descriptor and pipe management helpers
     static bool _setNonBlocking(int fd);
-    static bool _setCloseOnExec(int fd);
     static void _closePipe(int pipeFds[2]);
 
     // Path resolution and header conversion helpers

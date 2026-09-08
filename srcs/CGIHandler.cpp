@@ -22,12 +22,6 @@ bool CGIHandler::_setNonBlocking(int fd)
     return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
 }
 
-// Sets close-on-exec flag to ensure descriptors are not inherited by executed binaries
-bool CGIHandler::_setCloseOnExec(int fd)
-{
-    return fcntl(fd, F_SETFD, FD_CLOEXEC) >= 0;
-}
-
 // Closes and resets both ends of a pipe array
 void CGIHandler::_closePipe(int pipeFds[2])
 {
@@ -152,9 +146,7 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
         return false;
     }
 
-    if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]) ||
-        !_setCloseOnExec(inputPipe[0]) || !_setCloseOnExec(inputPipe[1]) ||
-        !_setCloseOnExec(outputPipe[0]) || !_setCloseOnExec(outputPipe[1]))
+    if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]))
     {
         _closePipe(inputPipe);
         _closePipe(outputPipe);

@@ -25,7 +25,7 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 make >/dev/null
-sed "s/127.0.0.1:8080/127.0.0.1:${PORT}/" config/webserv.conf > "$TMP_CONFIG"
+sed "s/127.0.0.1:8081/127.0.0.1:${PORT}/" config/webserv.conf > "$TMP_CONFIG"
 
 cat > www/cgi-bin/fail.py <<'PY'
 #!/usr/bin/env python3
@@ -53,6 +53,61 @@ grep -q "webserv is running" "$TMP_DIR/index"
 status="$(curl -sS -o "$TMP_DIR/missing" -w '%{http_code}' "http://127.0.0.1:${PORT}/missing")"
 [[ "$status" == "404" ]]
 grep -q "Custom 404" "$TMP_DIR/missing"
+
+status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+    "http://127.0.0.1:${PORT}/")"
+[[ "$status" == "405" ]]
+
+python3 - "$PORT" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+
+def request(raw, fragmented=False):
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        if fragmented:
+            for byte in raw:
+                sock.sendall(bytes((byte,)))
+        else:
+            sock.sendall(raw)
+        response = b""
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            response += chunk
+        return response
+
+fragmented = (
+    b"GET /index.html HTTP/1.1\r\n"
+    b"hOsT: localhost\r\n\r\n"
+)
+assert request(fragmented, True).startswith(b"HTTP/1.1 200")
+
+too_large = (
+    b"POST /uploads/too-large.bin HTTP/1.1\r\n"
+    b"Host: localhost\r\n"
+    b"Content-Length: 10485761\r\n\r\n"
+)
+assert request(too_large).startswith(b"HTTP/1.1 413")
+
+unsupported_encoding = (
+    b"POST /uploads/unsupported.bin HTTP/1.1\r\n"
+    b"Host: localhost\r\n"
+    b"Transfer-Encoding: gzip\r\n\r\n"
+)
+assert request(unsupported_encoding).startswith(b"HTTP/1.1 501")
+
+traversal = (
+    b"GET /../errors/404.html HTTP/1.1\r\n"
+    b"Host: localhost\r\n\r\n"
+)
+assert request(traversal).startswith(b"HTTP/1.1 403")
+PY
 
 printf 'ABC\0XYZ' > "$TMP_DIR/raw.bin"
 status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
@@ -110,6 +165,11 @@ assert response.startswith(b"HTTP/1.1 201")
 PY
 [[ "$(cat www/uploads/chunk.bin)" == "Wikipedia" ]]
 
+status="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+    "http://127.0.0.1:${PORT}/uploads/raw.bin")"
+[[ "$status" == "204" ]]
+[[ ! -e www/uploads/raw.bin ]]
+
 curl -sS -o "$TMP_DIR/slow" -w '%{http_code}' \
     "http://127.0.0.1:${PORT}/cgi-bin/slow.py" > "$TMP_DIR/slow-code" &
 SLOW_CURL_PID=$!
@@ -121,6 +181,11 @@ wait "$SLOW_CURL_PID"
 
 seq 1 50 | xargs -P10 -I{} sh -c \
     "test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT}/)\" = 200"
+
+for iteration in 1 2 3; do
+    seq 1 20 | xargs -P10 -I{} sh -c \
+        "test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT}/)\" = 200"
+done
 
 if ps -o stat= --ppid "$SERVER_PID" | grep -q Z; then
     echo "Zombie CGI process detected" >&2

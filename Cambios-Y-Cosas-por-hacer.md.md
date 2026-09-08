@@ -17,8 +17,7 @@ make
 // srcs/Server.cpp
 bool Server::_setNonBlocking(int fd)
 {
-    const int flags = fcntl(fd, F_GETFL, 0);
-    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
+    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
 }
 ```
 
@@ -26,8 +25,7 @@ bool Server::_setNonBlocking(int fd)
 // srcs/CGIHandler.cpp
 bool CGIHandler::_setNonBlocking(int fd)
 {
-    const int flags = fcntl(fd, F_GETFL, 0);
-    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
+    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
 }
 ```
 
@@ -102,6 +100,21 @@ if (_maxBodySize > 0 && _contentLength > _maxBodySize)
 
 - Host y puerto de escucha configurables.
 
+- Resolución del host de escucha mediante `getaddrinfo` y `freeaddrinfo`, en
+    lugar de `inet_pton`, con mensajes de error propios.
+
+```cpp
+struct addrinfo hints;
+struct addrinfo* addresses = NULL;
+std::memset(&hints, 0, sizeof(hints));
+hints.ai_family = AF_INET;
+hints.ai_socktype = SOCK_STREAM;
+hints.ai_flags = AI_PASSIVE;
+
+getaddrinfo(server.host.c_str(), port.c_str(), &hints, &addresses);
+freeaddrinfo(addresses);
+```
+
 ```cpp
 // srcs/ConfigParser.cpp
 void ConfigParser::_parseListen(ServerConfig& server, const std::string& value)
@@ -121,13 +134,35 @@ void ConfigParser::_parseListen(ServerConfig& server, const std::string& value)
 }
 ```
 
-- Páginas de error personalizadas.
+- Páginas de error personalizadas para los códigos HTTP que puede generar el
+    servidor. Se mantienen páginas específicas para `400`, `403`, `404`, `405`,
+    `413`, `414`, `431`, `501` y `505`, además de la página común `50x.html` para
+    `500` y `504`.
 
 ```cpp
 // srcs/ConfigParser.cpp
 else if (tokens[0] == "error_page")
     _parseErrorPage(server.error_pages, line);
 ```
+
+```nginx
+error_page 400 /errors/400.html;
+error_page 403 /errors/403.html;
+error_page 405 /errors/405.html;
+error_page 413 /errors/413.html;
+error_page 414 /errors/414.html;
+error_page 431 /errors/431.html;
+error_page 404 /errors/404.html;
+error_page 501 /errors/501.html;
+error_page 505 /errors/505.html;
+error_page 500 504 /errors/50x.html;
+```
+
+El servidor carga la página configurada para el código y, si no existe una
+configuración específica, genera un cuerpo HTML de error por defecto. Los
+errores de arranque usan mensajes propios, por ejemplo `Invalid listen host`,
+`Could not bind listener`, `Could not start listener` y `Could not register
+listener in epoll`, sin convertir `errno` en texto mediante `strerror`.
 
 - Subidas binarias y multipart/form-data.
 
@@ -171,10 +206,28 @@ location /cgi-bin {
 make test
 ```
 
-El script usa el puerto 18080 por defecto. Si se desea, se puede pasar otro puerto directamente:
+El script usa el puerto 18080 por defecto. Si queremos se puede pasar otro puerto directamente:
 
 ```sh
 ./tests/smoke_test.sh 18090
+```
+
+El smoke test incluye:
+
+- Puerto configurable, partiendo de `127.0.0.1:8081` en la configuración real.
+- Peticiones fragmentadas byte a byte.
+- Comprobaciones de `405`, `413`, `501` y `403`.
+- Respuestas de error con páginas personalizadas para `400`, `403`, `404`,
+  `405`, `413`, `414`, `431`, `501` y `505`, además de `500` y `504`.
+- Prueba de `DELETE` y confirmación de que el archivo se elimina.
+- Pruebas de concurrencia repetidas.
+- Uploads binarios y multipart, transferencia chunked, CGI, timeout `504` y
+    detección de procesos zombie.
+
+La ejecución verificada es:
+
+```text
+All smoke tests passed on port 18080.
 ```
 
 ## 2. Verificación realizada
@@ -200,7 +253,7 @@ El script usa el puerto 18080 por defecto. Si se desea, se puede pasar otro puer
   - Acepta un archivo de configuración como argumento y usa uno por defecto si no se pasa.
 
 - Server.cpp:
-  - Usa `epoll` (`epoll_create1`, `epoll_ctl`, `epoll_wait`)
+    - Usa `epoll` (`epoll_create`, `epoll_ctl`, `epoll_wait`)
   - Usa `fcntl(..., F_SETFL, O_NONBLOCK)` en el modo esperado
 
 - CGIHandler.cpp:
@@ -287,7 +340,7 @@ void ConfigParser::_handleServer(ServerConfig& server, const std::vector<std::st
 
 ### 3.2. CGIHandler
 
-Este archivo se encarga de ejecutar scripts CGI. Su tarea es crear un entorno correcto para que el script pueda funcionar, capturar su salida y convertirla en una respuesta HTTP.
+Este archivo ejecuta scripts CGI. Su funcionf es crear un entorno correcto para que el script pueda funcionar, capturar su salida y convertirla en una respuesta HTTP.
 
 Qué hay que mirar:
 - La creación del proceso hijo.
@@ -363,9 +416,7 @@ if (pipe(outputPipe) < 0)
 Versión mejorada: configura los descriptores de fichero.
 
 ```cpp
-if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]) ||
-    !_setCloseOnExec(inputPipe[0]) || !_setCloseOnExec(inputPipe[1]) ||
-    !_setCloseOnExec(outputPipe[0]) || !_setCloseOnExec(outputPipe[1]))
+if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]))
 {
     _closePipe(inputPipe);
     _closePipe(outputPipe);
@@ -373,67 +424,109 @@ if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]) ||
 }
 ```
 
+Solo se utiliza `fcntl` con `F_SETFL` y `O_NONBLOCK`. No se utilizan
+`F_GETFL`, `F_GETFD`, `F_SETFD` ni `FD_CLOEXEC` porque no están permitidos
+por la lista de funciones y flags del subject.
+
 Nota sobre `O_NONBLOCK` y macOS:
 `O_NONBLOCK` se usa junto con `fcntl(..., F_SETFL, O_NONBLOCK)` para poner un descriptor en modo no bloqueante. Sin eso, operaciones como `read`, `write`, `accept` o `recv` podrían quedarse esperando indefinidamente y bloquear el servidor. En macOS esta es la forma estándar y portable de habilitar I/O no bloqueante, por eso se incluye en el código.
 
 ## 4. Casos que necesito que compruebes
 
-### 4.1. Funcionalidad básica
+La prueba debe ejecutarse contra la configuración real del repositorio. En
+`config/webserv.conf` el listener actual es `127.0.0.1:8081`, la ruta CGI es
+`/cgi-bin` y la ruta de subida es `/uploads`.
 
-1. Servidor arranca correctamente con un archivo de configuración válido.
-2. Se pueden abrir las páginas estáticas de los tres virtual hosts.
-3. Un `GET` a `/index.html` devuelve `200 OK`.
-4. Un `GET` a una ruta inexistente devuelve `404 Not Found`.
+### 4.1. Arranque y configuración
 
-### 4.2. CGI
+1. Compilar con `make` usando C++98 y `-Werror`.
+2. Arrancar con la configuración válida y confirmar que anuncia `Listening`.
+3. Arrancar con un host inválido y comprobar que termina con un mensaje propio,
+    sin mostrar `strerror(errno)`.
+4. Arrancar con un puerto ocupado y comprobar que libera los recursos ya
+    abiertos y termina limpiamente.
+5. Probar configuraciones con directivas duplicadas, puerto `0`, puerto `65536`,
+    host vacío, raíz inexistente y página de error ilegible.
+6. Confirmar que solo se usan las funciones externas permitidas por el subject.
 
-1. Comprobar un CGI en Python: `curl http://localhost:8080/cgi/test.py`.
-2. Comprobar un CGI en Bash: `curl http://localhost:8080/cgi/test.sh`.
-3. Probar que se pasan correctamente los parámetros en query string: `curl "http://localhost:8080/cgi/test.py?name=test&value=123"`.
-4. Probar un `POST` con datos de formulario: `curl -X POST -d "name=test" http://localhost:8080/cgi/test.py`.
+### 4.2. HTTP fragmentado y límites
 
-### 4.3. Subidas y archivos
+1. Enviar la línea de petición, cabeceras y cuerpo en escrituras de un byte.
+2. Enviar varias peticiones consecutivas por la misma conexión y comprobar el
+    cierre o persistencia según el comportamiento implementado.
+3. Enviar cabeceras con nombres en mayúsculas, minúsculas y combinadas.
+4. Probar `Content-Length` correcto, ausente, duplicado, no numérico y con
+    overflow.
+5. Probar `Transfer-Encoding: chunked` dividido entre varios `recv`, incluyendo
+    chunks vacíos, extensiones, tamaño hexadecimal inválido y terminador ausente.
+6. Probar un `Transfer-Encoding` distinto de `chunked` y verificar `501`.
+7. Superar `client_max_body_size` mediante `Content-Length` y mediante chunked;
+    ambos casos deben devolver `413` sin guardar datos parciales.
+8. Enviar una petición incompleta, dejarla abierta y confirmar que el servidor
+    sigue atendiendo a otros clientes.
 
-1. Subir un archivo binario o de imagen con `curl -X POST --data-binary @archivo http://localhost:8080/upload/`.
-2. Comprobar que el archivo queda guardado en la carpeta configurada.
-3. Descargar el archivo subido y verificar que el contenido sigue siendo el mismo.
-4. Probar un `DELETE` sobre un archivo existente.
+### 4.3. Routing, métodos y archivos
 
-### 4.4. Errores HTTP
+1. `GET /` y `GET /index.html` deben devolver `200` y el contenido correcto.
+2. Una ruta inexistente debe devolver `404` usando la página personalizada.
+3. `POST` en `/` y `GET` en `/uploads` deben respetar los métodos configurados.
+4. Probar `DELETE` sobre un archivo existente, inexistente, vacío y sin permisos.
+5. Intentar traversal con `../`, codificación porcentual y variantes repetidas;
+    nunca debe salirse de la raíz configurada.
+6. Descargar archivos binarios y comparar bytes con `cmp` o un hash SHA-256.
+7. Probar nombres con espacios, caracteres especiales, nombre vacío y colisiones
+    en subidas multipart.
+8. Verificar `autoindex` en `/uploads` y que no se habilita accidentalmente en `/`.
 
-1. Probar un método no permitido y verificar `405 Method Not Allowed`.
-2. Probar un cuerpo demasiado grande y verificar `413 Payload Too Large`.
-3. Probar una ruta con traversal y verificar que se rechaza con `403` o `404` según la política del servidor.
+### 4.4. CGI bajo presión
 
-### 4.5. Configuración y robustez
+1. Ejecutar `www/cgi-bin/echo.py` con GET, query string, POST vacío y POST de
+    más de 1 MiB; comprobar método, argumentos, cuerpo y código HTTP.
+2. Ejecutar un CGI inexistente, no ejecutable, con intérprete inválido y que
+    termina con error; deben producir respuestas controladas, normalmente `404`
+    o `500` según el caso.
+3. Ejecutar un CGI que tarde más de 10 segundos y comprobar `504`, terminación
+    del proceso y ausencia de zombies.
+4. Hacer diez CGI simultáneos mientras se solicitan páginas estáticas; las
+    respuestas estáticas no deben quedar bloqueadas.
+5. Hacer que el CGI produzca más de `CGI_MAX_OUTPUT_SIZE` y comprobar que el
+    proceso se termina y la respuesta no desborda memoria.
+6. Verificar que las tuberías de entrada y salida se cierran en éxito, error,
+    timeout y desconexión del cliente.
 
-1. Probar con un archivo de configuración inválido para comprobar que el servidor falla de forma limpia.
-2. Comprobar que el servidor sigue respondiendo si un cliente se conecta y no envía datos.
-3. Verificar que no se quedan procesos CGI huérfanos tras terminar la ejecución.
-4. Probar varias conexiones simultáneas para comprobar que no se bloquea el servidor.
+### 4.5. Concurrencia, I/O y fugas
 
-### 4.6. Comandos
+1. Ejecutar 50 conexiones concurrentes a `/` y comprobar que todas reciben
+    `200`.
+2. Mantener un cliente lento enviando una petición byte a byte mientras otros
+    clientes reciben respuestas normales.
+3. Forzar escrituras parciales y `EAGAIN` con respuestas grandes; el servidor
+    debe continuar desde el offset correcto sin duplicar bytes.
+4. Interrumpir clientes durante lectura, escritura, upload y CGI; no deben
+    quedar descriptores abiertos ni procesos hijos.
+5. Comparar `/proc/<pid>/fd` antes y después de cientos de peticiones para
+    detectar fugas de descriptores.
+6. Repetir el smoke test varias veces y verificar que no quedan archivos de
+    prueba ni procesos `webserv` o CGI.
+
+### 4.6. Comandos base
 
 ```sh
-# Compilar
-bash TESTS/build.sh all
+make
+./webserv config/webserv.conf
 
-# Arrancar servidor
-./webserv config/multivhost.conf
+curl -i http://127.0.0.1:8081/
+curl -i http://127.0.0.1:8081/index.html
+curl -i http://127.0.0.1:8081/missing
+curl -i "http://127.0.0.1:8081/cgi-bin/echo.py?name=test&value=123"
+curl -i -X POST -d "name=test" http://127.0.0.1:8081/cgi-bin/echo.py
+curl -i -X POST --data-binary @archivo.bin \
+     http://127.0.0.1:8081/uploads/archivo.bin
+curl -i -X DELETE http://127.0.0.1:8081/uploads/archivo.bin
 
-# Probar puertos virtuales
-curl -i http://localhost:8080/
-curl -i http://localhost:8081/
-curl -i http://localhost:8082/
-
-# Probar CGI
-curl -i http://localhost:8080/cgi/test.py
-curl -i "http://localhost:8080/cgi/test.py?name=test"
-
-# Probar upload
-curl -i -X POST --data-binary @archivo.txt http://localhost:8080/upload/
+make test
 ```
 
 ## 5. Resumen rápido
 
-Si revisas estos puntos, tendremos una buena cobertura de lo que debería comprobar en el servidor: arranque, virtual hosts, CGI, uploads, errores HTTP y robustez frente a casos límite.
+Si revisas estos puntos, tendremos una buena cobertura: arranque, virtual hosts, CGI, uploads, errores HTTP y solidez frente a casos límite.
