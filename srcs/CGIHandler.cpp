@@ -18,15 +18,13 @@ CGIHandler::~CGIHandler() {}
 // Sets non-blocking I/O mode on the specified file descriptor
 bool CGIHandler::_setNonBlocking(int fd)
 {
-    const int flags = fcntl(fd, F_GETFL, 0);
-    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
+    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
 }
 
 // Sets close-on-exec flag to ensure descriptors are not inherited by executed binaries
 bool CGIHandler::_setCloseOnExec(int fd)
 {
-    const int flags = fcntl(fd, F_GETFD, 0);
-    return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) >= 0;
+    return fcntl(fd, F_SETFD, FD_CLOEXEC) >= 0;
 }
 
 // Closes and resets both ends of a pipe array
