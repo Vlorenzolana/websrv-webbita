@@ -10,6 +10,7 @@ class Request
 public:
     typedef std::map<std::string, std::string> HeaderMap;
 
+    // HTTP request parsing state machine
     enum ParsingState
     {
         PARSE_REQUEST_LINE,
@@ -22,18 +23,23 @@ public:
         PARSE_COMPLETE
     };
 
+    // Orthodox Canonical Form
     Request();
     ~Request();
 
+    // Core parsing and configuration methods
     bool parse(const std::string& rawData);
     void setMaxBodySize(std::size_t maxBodySize);
 
+    // Getters for request metadata
     const std::string& getMethod() const;
     const std::string& getPath() const;
     const std::string& getQueryString() const;
     const std::string& getHttpVersion() const;
     const HeaderMap& getHeaders() const;
     const std::string& getBody() const;
+
+    // State inspection getters
     int getErrorCode() const;
     bool isParsed() const;
     bool headersComplete() const;
@@ -48,21 +54,25 @@ private:
     std::string _httpVersion;
     HeaderMap _headers;
     std::string _body;
+
     bool _isParsed;
     bool _headersComplete;
     bool _isChunkedBody;
     int _errorCode;
     ParsingState _parsingState;
+
     std::size_t _contentLength;
     std::size_t _currentChunkSize;
     std::size_t _maxBodySize;
     std::string _rawBuffer;
 
+    // Parsing helpers
     static std::string _trim(const std::string& value);
     static std::string _toLower(const std::string& value);
     static bool _parseDecimalSize(const std::string& value, std::size_t& result);
     static bool _parseHexSize(const std::string& value, std::size_t& result);
 
+    // Internal parsing stages
     void _setError(int code);
     void _processRequestLine(const std::string& line);
     void _processHeaderLine(const std::string& line);

@@ -1,5 +1,4 @@
 #include "../includes/ConfigValidator.hpp"
-
 #include <arpa/inet.h>
 #include <sstream>
 #include <stdexcept>
@@ -8,6 +7,7 @@
 ConfigValidator::ConfigValidator() {}
 ConfigValidator::~ConfigValidator() {}
 
+// Iterates through all server configurations to perform semantic validation
 void ConfigValidator::validateAndNormalize(std::vector<ServerConfig>& servers)
 {
     if (servers.empty())
@@ -21,12 +21,17 @@ void ConfigValidator::validateAndNormalize(std::vector<ServerConfig>& servers)
     }
 }
 
+// Populates default server values, normalizes hostnames, and validates root access
 void ConfigValidator::_hydrateAndCheckServer(ServerConfig& server)
 {
     if (server.server_name.empty())
         server.server_name = "localhost";
     if (server.root_directory.empty())
         server.root_directory = "./www";
+
+    // Normalize localhost alias to loopback address
+    if (server.host == "localhost")
+        server.host = "127.0.0.1";
 
     struct in_addr address;
     if (inet_pton(AF_INET, server.host.c_str(), &address) != 1)
@@ -39,6 +44,7 @@ void ConfigValidator::_hydrateAndCheckServer(ServerConfig& server)
     _validateErrorPages(server.error_pages, server.root_directory);
 }
 
+// Ensures no two server blocks listen on the exact same host, port, and server_name combination
 void ConfigValidator::_checkDuplicateServers(
     const std::vector<ServerConfig>& servers, std::size_t currentIndex)
 {
@@ -51,13 +57,14 @@ void ConfigValidator::_checkDuplicateServers(
         {
             std::ostringstream message;
             message << "Duplicate server block on " << current.host << ":"
-                    << current.port << " for server_name '"
+                    << current.port << " with server_name '"
                     << current.server_name << "'";
             throw std::runtime_error(message.str());
         }
     }
 }
 
+// Normalizes location defaults and validates routes, permissions, and CGI paths
 void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
 {
     if (server.locations.empty())
@@ -81,6 +88,7 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
 
         if (location.allowed_methods.empty())
             location.allowed_methods.push_back("GET");
+
         if (location.root_directory.empty())
             location.root_directory = server.root_directory;
 
@@ -108,6 +116,7 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
     }
 }
 
+// Checks if the HTTP redirection status code falls in the 3xx range
 void ConfigValidator::_validateLocationRedirection(
     const LocationConfig& location)
 {
@@ -117,6 +126,7 @@ void ConfigValidator::_validateLocationRedirection(
         throw std::runtime_error("return directive requires a target URL");
 }
 
+// Verifies that configured custom error pages exist and are readable on disk
 void ConfigValidator::_validateErrorPages(
     const std::map<int, std::string>& errorPages,
     const std::string& rootDirectory)

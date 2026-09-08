@@ -3,6 +3,7 @@
 
 #include "Config.hpp"
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -12,9 +13,11 @@ public:
     ConfigParser();
     ~ConfigParser();
 
+    // Main parsing entry point
     std::vector<ServerConfig> parseFile(const std::string& filename);
 
 private:
+    // Finite state machine parser states
     enum ParsingState
     {
         GLOBAL,
@@ -22,22 +25,30 @@ private:
         LOCATION
     };
 
+    // String manipulation and normalization helpers
     static std::string _trim(const std::string& str);
+    static std::string _normalizeLine(const std::string& str);
     static std::vector<std::string> _split(const std::string& str);
     static std::string _withoutSemicolon(const std::string& value);
 
+    // State machine context handlers
     void _handleGlobal(ParsingState& state, const std::vector<std::string>& tokens,
         const std::string& line);
     void _handleServer(ParsingState& state, ServerConfig& currentServer,
         LocationConfig& currentLocation, const std::vector<std::string>& tokens,
-        const std::string& line, std::vector<ServerConfig>& servers);
+        const std::string& line, std::vector<ServerConfig>& servers,
+        std::set<std::string>& serverDirectives);
     void _handleLocation(ParsingState& state, ServerConfig& currentServer,
         LocationConfig& currentLocation, const std::vector<std::string>& tokens,
-        const std::string& line);
+        const std::string& line, std::set<std::string>& locationDirectives);
 
-    void _processServerLine(ServerConfig& server, const std::string& line);
-    void _processLocationLine(LocationConfig& location, const std::string& line);
+    // Line dispatchers
+    void _processServerLine(ServerConfig& server, const std::vector<std::string>& tokens,
+        const std::string& line, std::set<std::string>& serverDirectives);
+    void _processLocationLine(LocationConfig& location, const std::vector<std::string>& tokens,
+        const std::string& line, std::set<std::string>& locationDirectives);
 
+    // Directive parsers
     void _parseListen(ServerConfig& server, const std::string& value);
     void _parseLocationMethods(LocationConfig& location,
         const std::vector<std::string>& tokens);
@@ -48,10 +59,11 @@ private:
     void _parseCgiExtension(LocationConfig& location,
         const std::vector<std::string>& tokens);
 
+    // Value converters and validators
     int _parsePort(const std::string& value);
     long long _parseLimit(const std::string& value);
     void _parseErrorPage(std::map<int, std::string>& errorPages,
-        const std::string& line);
+        const std::vector<std::string>& tokens, const std::string& line);
 };
 
 #endif

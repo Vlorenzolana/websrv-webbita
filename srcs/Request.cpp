@@ -1,5 +1,4 @@
 #include "../includes/Request.hpp"
-
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
@@ -14,6 +13,7 @@ Request::Request()
 
 Request::~Request() {}
 
+// Trims leading and trailing whitespace/newlines
 std::string Request::_trim(const std::string& value)
 {
     const std::size_t first = value.find_first_not_of(" \t\r\n");
@@ -23,6 +23,7 @@ std::string Request::_trim(const std::string& value)
     return value.substr(first, last - first + 1);
 }
 
+// Converts a string to lowercase for case-insensitive header comparisons
 std::string Request::_toLower(const std::string& value)
 {
     std::string result(value);
@@ -34,6 +35,7 @@ std::string Request::_toLower(const std::string& value)
     return result;
 }
 
+// Safely converts a decimal ASCII representation to std::size_t with overflow protection
 bool Request::_parseDecimalSize(const std::string& value, std::size_t& result)
 {
     if (value.empty())
@@ -52,6 +54,7 @@ bool Request::_parseDecimalSize(const std::string& value, std::size_t& result)
     return true;
 }
 
+// Safely converts a hexadecimal ASCII representation (used in chunked transfers)
 bool Request::_parseHexSize(const std::string& value, std::size_t& result)
 {
     if (value.empty())
@@ -77,6 +80,7 @@ bool Request::_parseHexSize(const std::string& value, std::size_t& result)
     return true;
 }
 
+// Sets the error code and transitions state machine to completion
 void Request::_setError(int code)
 {
     if (_errorCode == 0)
@@ -85,6 +89,7 @@ void Request::_setError(int code)
     _isParsed = true;
 }
 
+// Parses and validates the HTTP Request Line (e.g., "GET /index.html HTTP/1.1")
 void Request::_processRequestLine(const std::string& line)
 {
     std::stringstream stream(line);
@@ -100,24 +105,29 @@ void Request::_processRequestLine(const std::string& line)
         _setError(400);
         return;
     }
+
     if (_path.size() > 8192)
     {
         _setError(414);
         return;
     }
+
     if (_method != "GET" && _method != "POST" && _method != "DELETE")
     {
-        _setError(405);
+        _setError(501);
         return;
     }
+
     if (_httpVersion != "HTTP/1.1" && _httpVersion != "HTTP/1.0")
     {
         _setError(505);
         return;
     }
+
     _extractQueryString();
 }
 
+// Parses an individual header line and prevents request smuggling (RFC 7230)
 void Request::_processHeaderLine(const std::string& line)
 {
     const std::size_t colon = line.find(':');
@@ -127,8 +137,15 @@ void Request::_processHeaderLine(const std::string& line)
         return;
     }
 
+    if (line[colon - 1] == ' ' || line[colon - 1] == '\t')
+    {
+        _setError(400);
+        return;
+    }
+
     const std::string key = _toLower(_trim(line.substr(0, colon)));
     const std::string value = _trim(line.substr(colon + 1));
+
     if (key.empty())
     {
         _setError(400);
@@ -138,7 +155,7 @@ void Request::_processHeaderLine(const std::string& line)
     HeaderMap::iterator existing = _headers.find(key);
     if (existing != _headers.end())
     {
-        if (key == "content-length")
+        if (key == "content-length" || key == "host")
         {
             if (existing->second != value)
                 _setError(400);
@@ -150,9 +167,11 @@ void Request::_processHeaderLine(const std::string& line)
         _headers[key] = value;
 }
 
+// Validates mandatory headers and determines if body is chunked or fixed-length
 void Request::_finishHeaders()
 {
     _headersComplete = true;
+
     if (_httpVersion == "HTTP/1.1" && getHeaderValue("host").empty())
     {
         _setError(400);
@@ -161,6 +180,7 @@ void Request::_finishHeaders()
 
     const std::string transferEncoding = _toLower(getHeaderValue("transfer-encoding"));
     const std::string contentLength = getHeaderValue("content-length");
+
     if (!transferEncoding.empty() && !contentLength.empty())
     {
         _setError(400);
@@ -186,11 +206,13 @@ void Request::_finishHeaders()
             _setError(400);
             return;
         }
+
         if (_maxBodySize > 0 && _contentLength > _maxBodySize)
         {
             _setError(413);
             return;
         }
+
         if (_contentLength == 0)
         {
             _parsingState = PARSE_COMPLETE;
@@ -205,6 +227,7 @@ void Request::_finishHeaders()
     _isParsed = true;
 }
 
+// Extracts and strips query parameters (?key=val) from the target URI
 void Request::_extractQueryString()
 {
     const std::size_t question = _path.find('?');
@@ -215,40 +238,51 @@ void Request::_extractQueryString()
     }
 }
 
+// Extracts the next CRLF/LF line from the raw internal buffer
 bool Request::_parseLine(std::string& line)
 {
     const std::size_t newline = _rawBuffer.find('\n');
     if (newline == std::string::npos)
         return false;
+
     line = _rawBuffer.substr(0, newline);
     _rawBuffer.erase(0, newline + 1);
+
     if (!line.empty() && line[line.size() - 1] == '\r')
         line.erase(line.size() - 1);
+
     return true;
 }
 
+// Verifies that accumulated body data does not exceed client_max_body_size
 void Request::_checkBodyLimit(std::size_t additionalBytes)
 {
     if (_maxBodySize == 0)
         return;
+
     if (additionalBytes > _maxBodySize || _body.size() > _maxBodySize - additionalBytes)
         _setError(413);
 }
 
+// Consumes fixed-length payload using the declared Content-Length
 bool Request::_parseFixedBody()
 {
     if (_rawBuffer.size() < _contentLength)
         return false;
+
     _checkBodyLimit(_contentLength);
     if (_errorCode != 0)
         return true;
+
     _body.assign(_rawBuffer, 0, _contentLength);
     _rawBuffer.erase(0, _contentLength);
+
     _parsingState = PARSE_COMPLETE;
     _isParsed = true;
     return true;
 }
 
+// Decodes HTTP chunked body incrementally until the terminating zero chunk
 bool Request::_parseChunkedBody()
 {
     while (_errorCode == 0 && !_isParsed)
@@ -258,13 +292,16 @@ bool Request::_parseChunkedBody()
             std::string line;
             if (!_parseLine(line))
                 return false;
+
             const std::size_t semicolon = line.find(';');
             const std::string sizeText = _trim(line.substr(0, semicolon));
+
             if (!_parseHexSize(sizeText, _currentChunkSize))
             {
                 _setError(400);
                 return true;
             }
+
             if (_currentChunkSize == 0)
                 _parsingState = PARSE_CHUNK_TRAILERS;
             else
@@ -279,6 +316,7 @@ bool Request::_parseChunkedBody()
         {
             if (_rawBuffer.size() < _currentChunkSize)
                 return false;
+
             _body.append(_rawBuffer, 0, _currentChunkSize);
             _rawBuffer.erase(0, _currentChunkSize);
             _parsingState = PARSE_CHUNK_DATA_END;
@@ -287,6 +325,7 @@ bool Request::_parseChunkedBody()
         {
             if (_rawBuffer.empty())
                 return false;
+
             if (_rawBuffer[0] == '\r')
             {
                 if (_rawBuffer.size() < 2)
@@ -305,6 +344,7 @@ bool Request::_parseChunkedBody()
                 _setError(400);
                 return true;
             }
+
             _parsingState = PARSE_CHUNK_SIZE;
         }
         else if (_parsingState == PARSE_CHUNK_TRAILERS)
@@ -312,12 +352,14 @@ bool Request::_parseChunkedBody()
             std::string line;
             if (!_parseLine(line))
                 return false;
+
             if (line.empty())
             {
                 _parsingState = PARSE_COMPLETE;
                 _isParsed = true;
                 return true;
             }
+
             if (line.find(':') == std::string::npos)
             {
                 _setError(400);
@@ -328,12 +370,14 @@ bool Request::_parseChunkedBody()
     return _isParsed;
 }
 
+// Appends incoming raw socket data and advances the HTTP parsing state machine
 bool Request::parse(const std::string& rawData)
 {
     if (_isParsed)
         return true;
 
     _rawBuffer.append(rawData);
+
     if (!_headersComplete && _rawBuffer.size() > 65536)
     {
         _setError(431);
@@ -351,6 +395,7 @@ bool Request::parse(const std::string& rawData)
         {
             if (line.empty())
                 continue;
+
             _processRequestLine(line);
             if (_errorCode == 0)
                 _parsingState = PARSE_HEADERS;
@@ -363,22 +408,28 @@ bool Request::parse(const std::string& rawData)
 
     if (_errorCode != 0 || _isParsed)
         return true;
+
     if (_parsingState == PARSE_BODY)
         return _parseFixedBody();
+
     return _parseChunkedBody();
 }
 
+// Dynamic payload boundary enforcement based on matching virtual server
 void Request::setMaxBodySize(std::size_t maxBodySize)
 {
     _maxBodySize = maxBodySize;
+
     if (_errorCode != 0)
         return;
+
     if (_headersComplete && !_isChunkedBody && _contentLength > _maxBodySize && _maxBodySize > 0)
         _setError(413);
     else if (_body.size() > _maxBodySize && _maxBodySize > 0)
         _setError(413);
 }
 
+// Getter implementations
 const std::string& Request::getMethod() const { return _method; }
 const std::string& Request::getPath() const { return _path; }
 const std::string& Request::getQueryString() const { return _queryString; }
@@ -391,6 +442,7 @@ bool Request::headersComplete() const { return _headersComplete; }
 bool Request::isChunked() const { return _isChunkedBody; }
 std::size_t Request::getDeclaredContentLength() const { return _contentLength; }
 
+// Searches for a case-insensitive header value
 std::string Request::getHeaderValue(const std::string& key) const
 {
     const HeaderMap::const_iterator it = _headers.find(_toLower(key));

@@ -8,12 +8,15 @@
 class ConfigValidator
 {
 public:
+    // Orthodox Canonical Form
     ConfigValidator();
     ~ConfigValidator();
 
+    // Semantic validation entry point
     void validateAndNormalize(std::vector<ServerConfig>& servers);
 
 private:
+    // Server and location level validators
     void _hydrateAndCheckServer(ServerConfig& server);
     void _checkDuplicateServers(const std::vector<ServerConfig>& servers,
         std::size_t currentIndex);
