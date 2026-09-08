@@ -3,7 +3,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <fcntl.h>
-#include <limits.h>
 #include <sstream>
 #include <unistd.h>
 
@@ -13,7 +12,9 @@ CGIHandler::CGIHandler(const std::string& scriptPath,
 {
 }
 
-CGIHandler::~CGIHandler() {}
+CGIHandler::~CGIHandler(void)
+{
+}
 
 // Sets non-blocking I/O mode on the specified file descriptor
 bool CGIHandler::_setNonBlocking(int fd)
@@ -109,6 +110,7 @@ void CGIHandler::_buildEnvironment(const Request& request,
 {
     std::ostringstream port;
     port << serverPort;
+
     std::ostringstream bodySize;
     bodySize << request.getBody().size();
 
@@ -120,32 +122,19 @@ void CGIHandler::_buildEnvironment(const Request& request,
     envMap["REQUEST_METHOD"] = request.getMethod();
     envMap["QUERY_STRING"] = request.getQueryString();
     envMap["SCRIPT_NAME"] = request.getPath();
-
-    char resolvedScript[PATH_MAX];
-    if (realpath(_scriptPath.c_str(), resolvedScript) != NULL)
-        envMap["SCRIPT_FILENAME"] = resolvedScript;
-    else
-        envMap["SCRIPT_FILENAME"] = _scriptPath;
-
+    envMap["SCRIPT_FILENAME"] = _scriptPath;
     envMap["PATH_INFO"] = "";
     envMap["CONTENT_LENGTH"] = bodySize.str();
     envMap["CONTENT_TYPE"] = request.getHeaderValue("content-type");
     envMap["REDIRECT_STATUS"] = "200";
-
-    char resolvedUpload[PATH_MAX];
-    if (!uploadPath.empty() && realpath(uploadPath.c_str(), resolvedUpload) != NULL)
-        envMap["UPLOAD_PATH"] = resolvedUpload;
-    else
-        envMap["UPLOAD_PATH"] = uploadPath;
+    envMap["UPLOAD_PATH"] = uploadPath;
 
     // Convert custom request headers into CGI HTTP_* variables
     const Request::HeaderMap& headers = request.getHeaders();
     for (Request::HeaderMap::const_iterator it = headers.begin();
          it != headers.end(); ++it)
-    {
         if (it->first != "content-length" && it->first != "content-type")
             envMap[_headerToCgiName(it->first)] = it->second;
-    }
 }
 
 // Creates asynchronous pipes, forks the process, redirects STDIO, and executes the CGI script
@@ -187,9 +176,6 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
 
     if (pid == 0)
     {
-        // Detach process group to isolate signal management
-        setpgid(0, 0);
-
         if (dup2(inputPipe[0], STDIN_FILENO) < 0 ||
             dup2(outputPipe[1], STDOUT_FILENO) < 0)
             _exit(126);
@@ -202,6 +188,7 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
         // Change directory to script folder for relative path support
         const std::string directory = _directoryName(_scriptPath);
         const std::string scriptName = _baseName(_scriptPath);
+
         if (chdir(directory.c_str()) < 0)
             _exit(126);
 
@@ -211,11 +198,11 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
         arguments[2] = NULL;
 
         execve(arguments[0], arguments, envp);
+
         _freeEnvp(envp);
         _exit(127);
     }
 
-    setpgid(pid, pid);
     _freeEnvp(envp);
 
     // Parent keeps write-end of input pipe and read-end of output pipe
@@ -227,5 +214,6 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
     process.pid = pid;
     process.stdinFd = inputPipe[1];
     process.stdoutFd = outputPipe[0];
+
     return true;
 }

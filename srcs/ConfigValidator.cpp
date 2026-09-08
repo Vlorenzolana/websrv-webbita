@@ -1,11 +1,17 @@
 #include "../includes/ConfigValidator.hpp"
-#include <arpa/inet.h>
+#include <cstring>
+#include <netdb.h>
 #include <sstream>
 #include <stdexcept>
 #include <unistd.h>
 
-ConfigValidator::ConfigValidator() {}
-ConfigValidator::~ConfigValidator() {}
+ConfigValidator::ConfigValidator()
+{
+}
+
+ConfigValidator::~ConfigValidator()
+{
+}
 
 // Iterates through all server configurations to perform semantic validation
 void ConfigValidator::validateAndNormalize(std::vector<ServerConfig>& servers)
@@ -26,6 +32,7 @@ void ConfigValidator::_hydrateAndCheckServer(ServerConfig& server)
 {
     if (server.server_name.empty())
         server.server_name = "localhost";
+
     if (server.root_directory.empty())
         server.root_directory = "./www";
 
@@ -33,9 +40,17 @@ void ConfigValidator::_hydrateAndCheckServer(ServerConfig& server)
     if (server.host == "localhost")
         server.host = "127.0.0.1";
 
-    struct in_addr address;
-    if (inet_pton(AF_INET, server.host.c_str(), &address) != 1)
+    struct addrinfo hints;
+    struct addrinfo* result;
+
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(server.host.c_str(), NULL, &hints, &result) != 0)
         throw std::runtime_error("Invalid IPv4 listen host: " + server.host);
+    
+    freeaddrinfo(result);
 
     if (access(server.root_directory.c_str(), F_OK) != 0 ||
         access(server.root_directory.c_str(), R_OK) != 0)
@@ -49,6 +64,7 @@ void ConfigValidator::_checkDuplicateServers(
     const std::vector<ServerConfig>& servers, std::size_t currentIndex)
 {
     const ServerConfig& current = servers[currentIndex];
+
     for (std::size_t i = 0; i < currentIndex; ++i)
     {
         if (servers[i].host == current.host &&
@@ -77,6 +93,7 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
     for (std::size_t i = 0; i < server.locations.size(); ++i)
     {
         LocationConfig& location = server.locations[i];
+
         if (location.path.empty() || location.path[0] != '/')
             throw std::runtime_error("Location path must start with '/': " + location.path);
 
@@ -122,6 +139,7 @@ void ConfigValidator::_validateLocationRedirection(
 {
     if (location.return_code < 300 || location.return_code > 399)
         throw std::runtime_error("return status must be a 3xx code");
+
     if (location.return_url.empty())
         throw std::runtime_error("return directive requires a target URL");
 }
@@ -135,8 +153,10 @@ void ConfigValidator::_validateErrorPages(
          it != errorPages.end(); ++it)
     {
         std::string path = it->second;
+
         if (!path.empty() && path[0] == '/')
             path = rootDirectory + path;
+
         if (access(path.c_str(), R_OK) != 0)
             throw std::runtime_error("Configured error page is unreadable: " + path);
     }
