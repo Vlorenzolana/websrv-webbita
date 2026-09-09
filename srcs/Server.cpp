@@ -328,11 +328,6 @@ void Server::_handleClientReadable(int clientFd)
             _closeConnection(clientFd);
             return;
         }
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return;
-        _closeConnection(clientFd);
         return;
     }
 }
@@ -392,12 +387,6 @@ void Server::_handleCgiWritable(int pipeFd)
             cgi->second.inputOffset += static_cast<std::size_t>(written);
             continue;
         }
-        if (written < 0 && errno == EINTR)
-            continue;
-        if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return;
-        _closeCgiPipe(pipeFd);
-        _tryFinalizeCgi(cgi->first);
         return;
     }
 
@@ -443,12 +432,6 @@ void Server::_handleCgiReadable(int pipeFd)
             _tryFinalizeCgi(pid);
             return;
         }
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return;
-        _closeCgiPipe(pipeFd);
-        _tryFinalizeCgi(pid);
         return;
     }
 }
@@ -517,11 +500,7 @@ bool Server::_flushResponse(int clientFd)
                 _clients[clientFd].lastActivity = std::time(NULL);
             continue;
         }
-        if (sent < 0 && errno == EINTR)
-            continue;
-        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return false;
-        return true;
+        return false;
     }
 
     _pendingResponses.erase(pending);

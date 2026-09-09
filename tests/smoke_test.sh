@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${1:-18080}"
+SECOND_PORT=$((PORT + 1))
 TMP_CONFIG="$(mktemp)"
 SERVER_LOG="$(mktemp)"
 TMP_DIR="$(mktemp -d)"
@@ -26,6 +27,24 @@ trap cleanup EXIT
 cd "$ROOT_DIR"
 make >/dev/null
 sed "s/127.0.0.1:8081/127.0.0.1:${PORT}/" config/webserv.conf > "$TMP_CONFIG"
+<<<<<<< HEAD
+=======
+cat >> "$TMP_CONFIG" <<EOF
+
+server {
+    listen 127.0.0.1:${SECOND_PORT};
+    server_name secondary.localhost;
+    root ./www;
+
+    location / {
+        allowed_methods GET;
+        root ./www;
+        index index.html;
+        autoindex off;
+    }
+}
+EOF
+>>>>>>> f6f1458 (fix remanent CHECK ERRNO errno in HANDLERS && multiport test update)
 
 cat > www/cgi-bin/fail.py <<'PY'
 #!/usr/bin/env python3
@@ -49,6 +68,11 @@ status="$(curl -sS -o "$TMP_DIR/index" -w '%{http_code}' "http://127.0.0.1:${POR
 [[ "$status" == "200" ]]
 
 grep -q "webserv is running" "$TMP_DIR/index"
+
+status="$(curl -sS -o "$TMP_DIR/secondary-index" -w '%{http_code}' \
+    "http://127.0.0.1:${SECOND_PORT}/")"
+[[ "$status" == "200" ]]
+grep -q "webserv is running" "$TMP_DIR/secondary-index"
 
 status="$(curl -sS -o "$TMP_DIR/missing" -w '%{http_code}' "http://127.0.0.1:${PORT}/missing")"
 [[ "$status" == "404" ]]
