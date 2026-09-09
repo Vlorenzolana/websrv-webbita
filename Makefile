@@ -28,6 +28,9 @@ fclean: clean
 test: all
 	./tests/smoke_test.sh
 
+leaks: all
+	LEAK_CHECK=1 ./tests/smoke_test.sh
+
 re: fclean all
 
-.PHONY: all clean fclean test re
+.PHONY: all clean fclean test leaks re

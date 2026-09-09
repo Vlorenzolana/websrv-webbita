@@ -99,6 +99,7 @@ private:
     static const std::size_t CGI_MAX_OUTPUT_SIZE = 16 * 1024 * 1024;
 
     static bool _setNonBlocking(int fd);
+    static bool _setCloseOnExec(int fd);
     static std::string _trim(const std::string& value);
     static std::string _toLower(const std::string& value);
     static std::string _intToString(long value);

@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <sstream>
 #include <stdexcept>
@@ -51,7 +50,14 @@ Server::~Server()
 
 bool Server::_setNonBlocking(int fd)
 {
-    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
+}
+
+bool Server::_setCloseOnExec(int fd)
+{
+    const int flags = fcntl(fd, F_GETFD, 0);
+    return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) >= 0;
 }
 
 std::string Server::_trim(const std::string& value)
@@ -83,9 +89,10 @@ std::string Server::_intToString(long value)
 
 void Server::init()
 {
-    _epollFd = epoll_create(128);
+    _epollFd = epoll_create1(EPOLL_CLOEXEC);
     if (_epollFd < 0)
-        throw std::runtime_error("Could not create epoll instance");
+        throw std::runtime_error("Failed to create epoll instance: " +
+            std::string(std::strerror(errno)));
 
     for (std::size_t i = 0; i < _servers.size(); ++i)
     {
@@ -115,7 +122,8 @@ void Server::run()
         {
             if (errno == EINTR)
                 continue;
-            throw std::runtime_error("Could not wait for events");
+            throw std::runtime_error("epoll_wait failed: " +
+                std::string(std::strerror(errno)));
         }
 
         for (int i = 0; i < count; ++i)
@@ -141,49 +149,45 @@ void Server::run()
 
 void Server::_openListener(const ServerConfig& server)
 {
-    struct addrinfo hints;
-    struct addrinfo* addresses = NULL;
-    std::memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-
-    const std::string port = _intToString(server.port);
-    if (getaddrinfo(server.host.c_str(), port.c_str(), &hints, &addresses) != 0)
-        throw std::runtime_error("Invalid listen host: " + server.host);
-
-    int listenerFd = -1;
-    for (struct addrinfo* address = addresses; address != NULL;
-         address = address->ai_next)
-    {
-        listenerFd = socket(address->ai_family, address->ai_socktype,
-            address->ai_protocol);
-        if (listenerFd < 0)
-            continue;
-
-        int reuseAddress = 1;
-        if (setsockopt(listenerFd, SOL_SOCKET, SO_REUSEADDR,
-                &reuseAddress, sizeof(reuseAddress)) < 0 ||
-            !_setNonBlocking(listenerFd) ||
-            bind(listenerFd, address->ai_addr, address->ai_addrlen) < 0)
-        {
-            close(listenerFd);
-            listenerFd = -1;
-            continue;
-        }
-        break;
-    }
-    freeaddrinfo(addresses);
-
+    const int listenerFd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenerFd < 0)
-        throw std::runtime_error("Could not bind listener on " + server.host +
-            ":" + port);
+        throw std::runtime_error("Failed to create listening socket: " +
+            std::string(std::strerror(errno)));
 
-    if (listen(listenerFd, SOMAXCONN) < 0)
+    int reuseAddress = 1;
+    if (setsockopt(listenerFd, SOL_SOCKET, SO_REUSEADDR,
+            &reuseAddress, sizeof(reuseAddress)) < 0 ||
+        !_setNonBlocking(listenerFd) || !_setCloseOnExec(listenerFd))
+    {
+        const std::string reason = std::strerror(errno);
+        close(listenerFd);
+        throw std::runtime_error("Failed to configure listening socket: " + reason);
+    }
+
+    struct sockaddr_in address;
+    std::memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(static_cast<unsigned short>(server.port));
+    if (inet_pton(AF_INET, server.host.c_str(), &address.sin_addr) != 1)
     {
         close(listenerFd);
-        throw std::runtime_error("Could not start listener on " + server.host +
-            ":" + port);
+        throw std::runtime_error("Invalid listen host: " + server.host);
+    }
+
+    if (bind(listenerFd, reinterpret_cast<struct sockaddr*>(&address),
+            sizeof(address)) < 0)
+    {
+        const std::string reason = std::strerror(errno);
+        close(listenerFd);
+        throw std::runtime_error("Failed to bind " + server.host + ":" +
+            _intToString(server.port) + ": " + reason);
+    }
+    if (listen(listenerFd, SOMAXCONN) < 0)
+    {
+        const std::string reason = std::strerror(errno);
+        close(listenerFd);
+        throw std::runtime_error("Failed to listen on " + server.host + ":" +
+            _intToString(server.port) + ": " + reason);
     }
 
     struct epoll_event event;
@@ -192,8 +196,9 @@ void Server::_openListener(const ServerConfig& server)
     event.data.fd = listenerFd;
     if (epoll_ctl(_epollFd, EPOLL_CTL_ADD, listenerFd, &event) < 0)
     {
+        const std::string reason = std::strerror(errno);
         close(listenerFd);
-        throw std::runtime_error("Could not register listener in epoll");
+        throw std::runtime_error("Failed to register listener in epoll: " + reason);
     }
 
     ListenerState listener;
@@ -223,7 +228,7 @@ void Server::_acceptClients(int listenerFd)
             return;
         }
 
-        if (!_setNonBlocking(clientFd))
+        if (!_setNonBlocking(clientFd) || !_setCloseOnExec(clientFd))
         {
             close(clientFd);
             continue;
@@ -542,6 +547,13 @@ void Server::_processRequest(int clientFd, const Request& request,
         _sendErrorResponse(clientFd, 404, server, NULL);
         return;
     }
+    if (server->client_max_body_size > 0 &&
+        request.getBody().size() >
+            static_cast<std::size_t>(server->client_max_body_size))
+    {
+        _sendErrorResponse(clientFd, 413, server, location);
+        return;
+    }
     if (!_isMethodAllowed(location, request.getMethod()))
     {
         _sendErrorResponse(clientFd, 405, server, location);
@@ -550,13 +562,6 @@ void Server::_processRequest(int clientFd, const Request& request,
     if (_hasPathTraversal(request.getPath()))
     {
         _sendErrorResponse(clientFd, 403, server, location);
-        return;
-    }
-    if (server->client_max_body_size > 0 &&
-        request.getBody().size() >
-            static_cast<std::size_t>(server->client_max_body_size))
-    {
-        _sendErrorResponse(clientFd, 413, server, location);
         return;
     }
 
@@ -976,7 +981,8 @@ bool Server::_findCgiInterpreter(const LocationConfig* location,
 std::string Server::_handleGet(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
-    std::string fullPath = _resolvePath(server, location, request.getPath());
+    std::string fullPath =
+        _resolvePath(server, location, request.getPath());
     struct stat fileStat;
     if (stat(fullPath.c_str(), &fileStat) != 0)
         return _buildErrorResponse(404, &server, location);
@@ -1055,15 +1061,43 @@ std::string Server::_handlePost(const ServerConfig& server,
 std::string Server::_handleDelete(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
-    const std::string fullPath = _resolvePath(server, location, request.getPath());
-    struct stat fileStat;
-    if (stat(fullPath.c_str(), &fileStat) != 0)
-        return _buildErrorResponse(404, &server, location);
-    if (!S_ISREG(fileStat.st_mode))
-        return _buildErrorResponse(403, &server, location);
-    if (std::remove(fullPath.c_str()) != 0)
+    const std::string fullPath =
+        _resolvePath(server, location, request.getPath());
+
+    struct stat fileInfo;
+
+    if (lstat(fullPath.c_str(), &fileInfo) == -1)
+    {
+        if (errno == ENOENT || errno == ENOTDIR)
+            return _buildErrorResponse(404, &server, location);
+
+        if (errno == EACCES)
+            return _buildErrorResponse(403, &server, location);
+
         return _buildErrorResponse(500, &server, location);
-    return _buildResponse(204, _statusText(204), "text/plain", "");
+    }
+
+    // Este servidor solo permite DELETE sobre archivos regulares.
+    if (!S_ISREG(fileInfo.st_mode))
+        return _buildErrorResponse(403, &server, location);
+
+    if (unlink(fullPath.c_str()) == -1)
+    {
+        if (errno == ENOENT || errno == ENOTDIR)
+            return _buildErrorResponse(404, &server, location);
+
+        if (errno == EACCES || errno == EPERM || errno == EROFS)
+            return _buildErrorResponse(403, &server, location);
+
+        return _buildErrorResponse(500, &server, location);
+    }
+
+    return _buildResponse(
+        204,
+        _statusText(204),
+        "",
+        ""
+    );
 }
 
 bool Server::_saveRawUpload(const Request& request,
@@ -1313,7 +1347,8 @@ std::string Server::_buildCgiHttpResponse(const std::string& rawOutput) const
             }
             else if (lowerName == "content-type")
                 contentType = value;
-            else if (lowerName != "content-length" && lowerName != "connection")
+            else if (lowerName != "content-length" &&
+                     lowerName != "connection")
             {
                 extraHeaders[name] = value;
                 if (lowerName == "location")
