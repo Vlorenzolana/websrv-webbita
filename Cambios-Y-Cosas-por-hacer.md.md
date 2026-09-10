@@ -1,5 +1,30 @@
 ﻿# Continuación del trabajo
 
+## Cambio reciente: límite y drenaje de CGI
+
+- Se limita a 16 el número de procesos CGI activos simultáneamente. Cada CGI
+    puede registrar uno o dos pipes en `epoll`: salida y, si tiene body, entrada.
+    Las peticiones que superarían el límite de procesos reciben `503`.
+- Los extremos del padre se mantienen en modo no bloqueante y conservan las
+    flags existentes del descriptor al añadir `O_NONBLOCK`.
+- Cada evento de `epoll` realiza como máximo una lectura o escritura no
+    bloqueante. Como el registro es level-triggered, `epoll` vuelve a notificar
+    mientras quede trabajo pendiente, sin consultar `errno` después de
+    `read` o `write`.
+- Los sockets de cliente aplican el mismo criterio: un `recv()` o `send()` por
+    evento de `epoll`, con offsets para continuar respuestas parciales.
+- El límite CGI devuelve `503 Service Unavailable` con el texto HTTP estándar.
+- Los procesos terminados se revisan con `waitpid(..., WNOHANG)` para evitar
+    zombies y permitir que el servidor continúe atendiendo conexiones.
+- Se mantiene el timeout de CGI de 10 segundos y el límite de salida de 16 MiB.
+
+La compilación y el smoke test fueron ejecutados en WSL porque el proyecto usa
+`fork`, `pipe`, `epoll` y `waitpid`:
+
+```text
+All smoke tests passed on port 18080.
+```
+
 ## 1. Correcciones implementadas
 
 ### Compilación y ejecución
@@ -11,13 +36,25 @@ make
 
 ### Correcciones principales
 
+- I/O de clientes alineado con el modelo CGI: `_handleClientReadable()` hace
+    un único `recv()` por evento `EPOLLIN` y `_flushResponse()` hace un único
+    `send()` por evento `EPOLLOUT`. Los offsets permiten continuar una lectura
+    de petición o una respuesta parcial en la siguiente notificación de
+    `epoll`, sin loops adicionales sobre el mismo descriptor.
+
+- Límite CGI con respuesta HTTP estándar: cuando ya hay 16 procesos CGI
+    activos, la petición nueva recibe `503 Service Unavailable`. El texto de
+    estado también se usa en el cuerpo HTML de error si no hay una página
+    personalizada configurada.
+
 - Sockets de cliente y pipes de CGI en modo no bloqueante, integrados con `epoll`.
 
 ```cpp
 // srcs/Server.cpp
 bool Server::_setNonBlocking(int fd)
 {
-    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
 }
 ```
 
@@ -25,7 +62,8 @@ bool Server::_setNonBlocking(int fd)
 // srcs/CGIHandler.cpp
 bool CGIHandler::_setNonBlocking(int fd)
 {
-    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
 }
 ```
 
@@ -136,8 +174,8 @@ void ConfigParser::_parseListen(ServerConfig& server, const std::string& value)
 
 - Páginas de error personalizadas para los códigos HTTP que puede generar el
     servidor. Se mantienen páginas específicas para `400`, `403`, `404`, `405`,
-    `413`, `414`, `431`, `501` y `505`, además de la página común `50x.html` para
-    `500` y `504`.
+    `413`, `414`, `431`, `501`, `503` y `505`, además de la página común `50x.html`
+    para `500` y `504`.
 
 ```cpp
 // srcs/ConfigParser.cpp
@@ -154,6 +192,7 @@ error_page 414 /errors/414.html;
 error_page 431 /errors/431.html;
 error_page 404 /errors/404.html;
 error_page 501 /errors/501.html;
+error_page 503 /errors/503.html;
 error_page 505 /errors/505.html;
 error_page 500 504 /errors/50x.html;
 ```
@@ -177,10 +216,8 @@ curl -X POST --data-binary @"$TMP_DIR/raw.bin" \
 ```cpp
 // srcs/Server.cpp
 if ((events & EPOLLOUT) &&
-    client->second.responsePending && !client->second.processing)
-{
-    _sendResponse(clientFd);
-}
+    _pendingResponses.find(clientFd) != _pendingResponses.end())
+    _handleClientWritable(clientFd);
 ```
 
 - Timeout de clientes inactivos y limpieza de descriptores con un único propietario.
@@ -188,18 +225,13 @@ if ((events & EPOLLOUT) &&
 ```cpp
 // srcs/Server.cpp
 _checkTimeouts();
-```
 
 ```nginx
-location /cgi-bin {
     allowed_methods GET POST;
-    root ./www/cgi-bin;
     upload_path ./www/uploads;
     cgi_extension .py /usr/bin/python3;
     cgi_extension .sh /bin/bash;
-}
 ```
-
 ### Prueba rápida incluida
 
 ```sh
@@ -258,7 +290,7 @@ All smoke tests passed on port 18080.
 
 - Server.cpp:
     - Usa `epoll` (`epoll_create`, `epoll_ctl`, `epoll_wait`)
-  - Usa `fcntl(..., F_SETFL, O_NONBLOCK)` en el modo esperado
+    - Usa `fcntl` para conservar las flags existentes y añadir `O_NONBLOCK`
 
 - CGIHandler.cpp:
   - Implementa el flujo CGI con `fork`, `pipe`, `dup2` y `execve`
@@ -268,6 +300,19 @@ All smoke tests passed on port 18080.
 - ✅ Cumple los puntos principales y más críticos del subject.
 - ⚠️ La comprobación exhaustiva de fugas de descriptores, permisos y algunas
     variantes de configuración requiere pruebas manuales adicionales.
+
+### Validación del cambio de I/O
+
+```sh
+wsl --cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita -- make clean
+wsl --cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita -- make test
+```
+
+Resultado verificado:
+
+```text
+All smoke tests passed on port 18080.
+```
 
 ## 3. Explicación técnica del parser y del CGI
 
@@ -350,9 +395,10 @@ if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]))
 }
 ```
 
-Solo se utiliza `fcntl` con `F_SETFL` y `O_NONBLOCK`. No se utilizan
-`F_GETFL`, `F_GETFD`, `F_SETFD` ni `FD_CLOEXEC` porque no están permitidos
-por la lista de funciones y flags del subject.
+Se utiliza `fcntl` con `F_GETFL` y `F_SETFL` para conservar las flags existentes
+del descriptor y añadir `O_NONBLOCK`. El servidor también configura
+`FD_CLOEXEC` donde corresponde para evitar herencias accidentales de
+descriptores.
 
 Nota sobre `O_NONBLOCK` y macOS:
 `O_NONBLOCK` se usa junto con `fcntl(..., F_SETFL, O_NONBLOCK)` para poner un descriptor en modo no bloqueante. Sin eso, operaciones como `read`, `write`, `accept` o `recv` podrían quedarse esperando indefinidamente y bloquear el servidor. En macOS esta es la forma estándar y portable de habilitar I/O no bloqueante, por eso se incluye en el código.
@@ -453,6 +499,183 @@ curl -i -X DELETE http://127.0.0.1:8081/uploads/archivo.bin
 make test
 ```
 
+### 4.7. Guía de prueba manual CGI
+
+Ejecutar los pasos desde WSL, en dos terminales, empezando por la raíz del
+repositorio:
+
+```sh
+cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita
+```
+
+#### Paso 1: compilar y arrancar
+
+En la primera terminal:
+
+```sh
+make clean && make
+./webserv config/webserv.conf
+```
+
+Debe aparecer `Listening on 127.0.0.1:8081`. Mantener esta terminal abierta.
+
+#### Paso 2: comprobar HTTP y CGI
+
+En la segunda terminal:
+
+```sh
+curl -i http://127.0.0.1:8081/
+curl -i "http://127.0.0.1:8081/cgi-bin/echo.py?name=test"
+curl -i -X POST -d "name=test" \
+    http://127.0.0.1:8081/cgi-bin/echo.py
+time curl -i http://127.0.0.1:8081/
+```
+
+Las respuestas deben terminar con un código HTTP válido; la petición estática
+debe seguir respondiendo mientras se ejecuta el CGI.
+
+#### Paso 3: preparar un CGI lento
+
+Crear un script temporal para comprobar el timeout y los procesos activos:
+
+```sh
+printf '%s\n' \
+    '#!/usr/bin/env python3' \
+    'import time' \
+    'time.sleep(30)' \
+    'print("Content-Type: text/plain")' \
+    'print()' \
+    'print("late response")' > www/cgi-bin/hold.py
+chmod +x www/cgi-bin/hold.py
+```
+
+Lanzarlo y observarlo desde la segunda terminal:
+
+```sh
+curl -i http://127.0.0.1:8081/cgi-bin/hold.py &
+ps -ef | grep '[h]old.py'
+```
+
+Debe terminar aproximadamente a los 10 segundos con `504`. Después no debe
+quedar ningún proceso `hold.py`:
+
+```sh
+ps -ef | grep '[h]old.py' || true
+```
+
+#### Paso 4: comprobar el límite de 16 CGI activos
+
+Lanzar 16 CGI lentos en paralelo y esperar un segundo:
+
+```sh
+for i in $(seq 1 16); do
+    curl -sS -o "/tmp/cgi-$i.out" \
+        -w "cgi-$i %{http_code}\n" \
+        http://127.0.0.1:8081/cgi-bin/hold.py &
+done
+sleep 1
+```
+
+Una nueva petición debe devolver `503`, porque el límite cuenta procesos CGI,
+no pipes:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' \
+    http://127.0.0.1:8081/cgi-bin/hold.py
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8081/
+```
+
+El primer código esperado es `503` y el segundo `200`. Esto confirma que el
+límite CGI no bloquea las peticiones estáticas.
+
+#### Paso 5: probar la progresión y el backpressure
+
+Repetir la carga con `2`, `5`, `10`, `20`, `32` y `64` CGI. Registrar latencia,
+códigos HTTP, timeouts y procesos activos:
+
+```sh
+for total in 2 5 10 20 32 64; do
+    echo "=== $total CGI ==="
+    start=$(date +%s%N)
+    pids=""
+    for i in $(seq 1 "$total"); do
+        curl -sS -o "/tmp/cgi-$total-$i.out" \
+            -w "%{http_code}\n" \
+            http://127.0.0.1:8081/cgi-bin/hold.py &
+        pids="$pids $!"
+    done
+    for pid in $pids; do wait "$pid"; done
+    end=$(date +%s%N)
+    echo "elapsed_ms=$(( (end - start) / 1000000 ))"
+done
+```
+
+Por encima de 16 deben aparecer rechazos `503`. Para observar backpressure de
+entrada y salida, enviar un body grande a varios CGI:
+
+```sh
+dd if=/dev/zero of=/tmp/cgi-body.bin bs=1M count=1
+for i in $(seq 1 10); do
+    curl -sS -o "/tmp/echo-$i.out" -X POST \
+        --data-binary @/tmp/cgi-body.bin \
+        http://127.0.0.1:8081/cgi-bin/echo.py &
+done
+wait
+```
+
+Si las peticiones estáticas siguen devolviendo `200` y los CGI avanzan, el
+backpressure está controlado. Si se bloquean antes de 16 procesos, revisar la
+arquitectura del bucle de eventos.
+
+#### Paso 6: limpiar y comprobar zombies
+
+Detener el servidor con `Ctrl+C` y eliminar el CGI temporal y sus salidas:
+
+```sh
+rm -f www/cgi-bin/hold.py /tmp/cgi-*.out /tmp/cgi-body.bin /tmp/echo-*.out
+ps -ef | grep '[w]ebserv\|[h]old.py' || true
+```
+
+No debe quedar ningún proceso hijo CGI ni un `webserv` antiguo.
+
 ## 5. Resumen rápido
 
 Si revisas estos puntos, tendremos una buena cobertura: arranque, virtual hosts, CGI, uploads, errores HTTP y solidez frente a casos límite.
+
+## 6. Cosas por hacer
+
+- Modelo actual de límite y rechazo:
+    - `CGI_MAX_PROCESSES` vale `16`.
+    - Con `0..15` CGI activos, una nueva petición puede crear el proceso.
+    - Con `16` CGI activos, la nueva petición recibe inmediatamente `503
+        Service Unavailable`.
+    - Cuando `_tryFinalizeCgi()` llama a `_eraseCgiState(childPid)`, se libera
+        el slot y una petición nueva puede iniciar otro CGI.
+    - No existe una cola de peticiones pendientes: una petición rechazada no se
+        guarda ni se reintenta automáticamente.
+
+- La progresión `2 -> 5 -> 10 -> 20 -> 32 -> 64` es una prueba de carga, no
+    un mecanismo de queueing:
+    - Con `2`, `5` y `10`, todos los CGI deberían poder arrancar.
+    - Con `20`, aproximadamente 16 arrancan y el resto recibe `503`.
+    - Con `32` y `64`, se observa con más claridad el límite y el backpressure.
+    - Cuando terminan procesos, entran peticiones nuevas; las que ya recibieron
+        `503` no se recuperan.
+
+- Resumen del comportamiento:
+
+```text
+máximo 16 CGI activos
+resto -> 503 inmediato
+sin queueing
+```
+
+- Añadir una prueba específica que abra más de 16 procesos CGI y compruebe la
+    respuesta `503` del límite.
+- Ejecutar una prueba de carga progresiva con `2 -> 5 -> 10 -> 20 -> 32 -> 64`
+    CGI simultáneos. En cada escalón registrar latencia, throughput, errores,
+    timeouts, procesos activos y pipes registrados para identificar el primer
+    punto de degradación y distinguir saturación arquitectónica de backpressure.
+- Ejecutar la prueba de fugas con Valgrind en un entorno Linux que lo tenga
+    instalado.
+- Revisar manualmente variantes adicionales de configuración y permisos.

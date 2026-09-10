@@ -305,36 +305,28 @@ void Server::_handleClientReadable(int clientFd)
         return;
 
     char buffer[8192];
-    while (true)
+    const ssize_t received = recv(clientFd, buffer, sizeof(buffer), 0);
+    if (received > 0)
     {
-        const ssize_t received = recv(clientFd, buffer, sizeof(buffer), 0);
-        if (received > 0)
-        {
-            client->second.lastActivity = std::time(NULL);
-            const bool complete = client->second.request.parse(
-                std::string(buffer, static_cast<std::size_t>(received)));
-            _updateClientBodyLimit(clientFd);
-            client = _clients.find(clientFd);
-            if (client == _clients.end())
-                return;
-
-            if (complete || client->second.request.isParsed())
-            {
-                client->second.processing = true;
-                const Request request = client->second.request;
-                _processRequest(clientFd, request, client->second.listenPort,
-                    client->second.listenHost);
-                return;
-            }
-            continue;
-        }
-        if (received == 0)
-        {
-            _closeConnection(clientFd);
+        client->second.lastActivity = std::time(NULL);
+        const bool complete = client->second.request.parse(
+            std::string(buffer, static_cast<std::size_t>(received)));
+        _updateClientBodyLimit(clientFd);
+        client = _clients.find(clientFd);
+        if (client == _clients.end())
             return;
+
+        if (complete || client->second.request.isParsed())
+        {
+            client->second.processing = true;
+            const Request request = client->second.request;
+            _processRequest(clientFd, request, client->second.listenPort,
+                client->second.listenHost);
         }
         return;
     }
+    if (received == 0)
+        _closeConnection(clientFd);
 }
 
 void Server::_handleClientWritable(int clientFd)
@@ -359,12 +351,19 @@ void Server::_handleCgiEvent(int pipeFd, unsigned int events)
     if (_cgiPipeRefs.find(pipeFd) == _cgiPipeRefs.end())
         return;
 
-    if (events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
+    if (events & EPOLLERR)
     {
         if (!isInput)
             _handleCgiReadable(pipeFd);
         if (_cgiPipeRefs.find(pipeFd) != _cgiPipeRefs.end())
             _closeCgiPipe(pipeFd);
+    }
+    else if (events & (EPOLLHUP | EPOLLRDHUP))
+    {
+        if (isInput)
+            _closeCgiPipe(pipeFd);
+        else
+            _handleCgiReadable(pipeFd);
     }
 }
 
@@ -382,18 +381,16 @@ void Server::_handleCgiWritable(int pipeFd)
         return;
     }
 
-    while (cgi->second.inputOffset < cgi->second.input.size())
+    if (cgi->second.inputOffset < cgi->second.input.size())
     {
         const ssize_t written = write(pipeFd,
             cgi->second.input.data() + cgi->second.inputOffset,
             cgi->second.input.size() - cgi->second.inputOffset);
         if (written > 0)
-        {
             cgi->second.inputOffset += static_cast<std::size_t>(written);
-            continue;
-        }
-        return;
     }
+    if (cgi->second.inputOffset < cgi->second.input.size())
+        return;
 
     const pid_t pid = cgi->first;
     _closeCgiPipe(pipeFd);
@@ -415,29 +412,24 @@ void Server::_handleCgiReadable(int pipeFd)
     }
 
     char buffer[8192];
-    while (true)
+    const ssize_t count = read(pipeFd, buffer, sizeof(buffer));
+    if (count > 0)
     {
-        const ssize_t count = read(pipeFd, buffer, sizeof(buffer));
-        if (count > 0)
+        const std::size_t received = static_cast<std::size_t>(count);
+        if (received > CGI_MAX_OUTPUT_SIZE ||
+            cgi->second.output.size() > CGI_MAX_OUTPUT_SIZE - received)
         {
-            const std::size_t received = static_cast<std::size_t>(count);
-            if (received > CGI_MAX_OUTPUT_SIZE ||
-                cgi->second.output.size() > CGI_MAX_OUTPUT_SIZE - received)
-            {
-                cgi->second.outputTooLarge = true;
-                _terminateCgi(pid, false);
-                return;
-            }
+            cgi->second.outputTooLarge = true;
+            _terminateCgi(pid, false);
+        }
+        else
             cgi->second.output.append(buffer, received);
-            continue;
-        }
-        if (count == 0)
-        {
-            _closeCgiPipe(pipeFd);
-            _tryFinalizeCgi(pid);
-            return;
-        }
         return;
+    }
+    if (count == 0)
+    {
+        _closeCgiPipe(pipeFd);
+        _tryFinalizeCgi(pid);
     }
 }
 
@@ -501,7 +493,7 @@ bool Server::_flushResponse(int clientFd)
     if (pending == _pendingResponses.end())
         return true;
 
-    while (pending->second.offset < pending->second.data.size())
+    if (pending->second.offset < pending->second.data.size())
     {
         const ssize_t sent = send(clientFd,
             pending->second.data.data() + pending->second.offset,
@@ -511,10 +503,11 @@ bool Server::_flushResponse(int clientFd)
             pending->second.offset += static_cast<std::size_t>(sent);
             if (_clients.find(clientFd) != _clients.end())
                 _clients[clientFd].lastActivity = std::time(NULL);
-            continue;
         }
-        return false;
     }
+
+    if (pending->second.offset < pending->second.data.size())
+        return false;
 
     _pendingResponses.erase(pending);
     return true;
@@ -588,6 +581,11 @@ void Server::_processRequest(int clientFd, const Request& request,
     if (stat(fullPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode) &&
         _findCgiInterpreter(location, fullPath, interpreter))
     {
+        if (_cgiByPid.size() >= CGI_MAX_PROCESSES)
+        {
+            _sendErrorResponse(clientFd, 503, server, location);
+            return;
+        }
         if (!_startCgi(clientFd, request, *server, location, fullPath))
             _sendErrorResponse(clientFd, 500, server, location);
         return;
@@ -738,6 +736,8 @@ void Server::_reapCgiProcesses()
             cgi->second.exitStatus = 0;
             _tryFinalizeCgi(pids[i]);
         }
+        else if (result < 0 && errno == EINTR)
+            continue;
     }
 }
 
@@ -1400,6 +1400,7 @@ std::string Server::_statusText(int code) const
         case 500: return "Internal Server Error";
         case 501: return "Not Implemented";
         case 502: return "Bad Gateway";
+        case 503: return "Service Unavailable";
         case 504: return "Gateway Timeout";
         case 505: return "HTTP Version Not Supported";
         default: return "Error";

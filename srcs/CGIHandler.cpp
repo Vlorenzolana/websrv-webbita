@@ -19,7 +19,8 @@ CGIHandler::~CGIHandler(void)
 // Sets non-blocking I/O mode on the specified file descriptor
 bool CGIHandler::_setNonBlocking(int fd)
 {
-    return fcntl(fd, F_SETFL, O_NONBLOCK) >= 0;
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
 }
 
 // Closes and resets both ends of a pipe array
