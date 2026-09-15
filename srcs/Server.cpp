@@ -1074,7 +1074,6 @@ std::string Server::_handleDelete(const ServerConfig& server,
 {
     const std::string fullPath = _resolvePath(server, location, request.getPath());
     struct stat fileStat;
-
     if (stat(fullPath.c_str(), &fileStat) != 0)
         return _buildErrorResponse(404, &server, location);
 

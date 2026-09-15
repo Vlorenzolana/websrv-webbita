@@ -32,6 +32,7 @@ public:
 private:
     std::string _scriptPath;
     std::string _interpreterPath;
+    bool _directExecutable;
 
     // File descriptor and pipe management helpers
     static bool _setNonBlocking(int fd);

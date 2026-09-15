@@ -8,8 +8,13 @@
 
 CGIHandler::CGIHandler(const std::string& scriptPath,
     const std::string& interpreterPath)
-    : _scriptPath(scriptPath), _interpreterPath(interpreterPath)
+    : _scriptPath(scriptPath), _interpreterPath(interpreterPath),
+      _directExecutable(false)
 {
+    const std::size_t slash = interpreterPath.find_last_of('/');
+    const std::string name = interpreterPath.substr(slash == std::string::npos
+        ? 0 : slash + 1);
+    _directExecutable = name == "cgi_tester" || name == "cgi_test";
 }
 
 CGIHandler::~CGIHandler(void)
@@ -116,9 +121,10 @@ void CGIHandler::_buildEnvironment(const Request& request,
     envMap["SERVER_PORT"] = port.str();
     envMap["REQUEST_METHOD"] = request.getMethod();
     envMap["QUERY_STRING"] = request.getQueryString();
+    envMap["REQUEST_URI"] = request.getPath();
     envMap["SCRIPT_NAME"] = request.getPath();
     envMap["SCRIPT_FILENAME"] = _scriptPath;
-    envMap["PATH_INFO"] = "";
+    envMap["PATH_INFO"] = request.getPath();
     envMap["CONTENT_LENGTH"] = bodySize.str();
     envMap["CONTENT_TYPE"] = request.getHeaderValue("content-type");
     envMap["REDIRECT_STATUS"] = "200";
@@ -178,17 +184,19 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
         close(outputPipe[0]);
         close(outputPipe[1]);
 
-        // Change directory to script folder for relative path support
-        const std::string directory = _directoryName(_scriptPath);
-        const std::string scriptName = _baseName(_scriptPath);
-
-        if (chdir(directory.c_str()) < 0)
-            exit(126);
-
         char* arguments[3];
         arguments[0] = const_cast<char*>(_interpreterPath.c_str());
-        arguments[1] = const_cast<char*>(scriptName.c_str());
-        arguments[2] = NULL;
+        if (_directExecutable)
+            arguments[1] = NULL;
+        else
+        {
+            const std::string directory = _directoryName(_scriptPath);
+            const std::string scriptName = _baseName(_scriptPath);
+            if (chdir(directory.c_str()) < 0)
+                exit(126);
+            arguments[1] = const_cast<char*>(scriptName.c_str());
+            arguments[2] = NULL;
+        }
 
         execve(arguments[0], arguments, envp);
 
