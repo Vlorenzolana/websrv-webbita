@@ -312,10 +312,13 @@ void ConfigParser::_parseLocationMethods(LocationConfig& location,
     for (std::size_t i = 1; i < tokens.size(); ++i)
     {
         const std::string& method = tokens[i];
-        if (method != "GET" && method != "POST" && method != "DELETE")
+        if (method != "GET" && method != "POST" && method != "DELETE" && 
+            method != "HEAD" && method != "PUT")
             throw std::runtime_error("Invalid HTTP method: " + method);
+
         if (seen.count(method))
             throw std::runtime_error("Duplicate method in allowed_methods: " + method);
+
         seen.insert(method);
         location.allowed_methods.push_back(method);
     }

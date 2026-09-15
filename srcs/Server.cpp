@@ -473,8 +473,16 @@ void Server::_queueResponse(int clientFd, const std::string& response)
     if (_clients.find(clientFd) == _clients.end())
         return;
 
+    std::string finalResponse = response;
+    if (_clients[clientFd].request.getMethod() == "HEAD")
+    {
+        std::size_t headerEnd = finalResponse.find("\r\n\r\n");
+        if (headerEnd != std::string::npos)
+            finalResponse.erase(headerEnd + 4);
+    }
+
     PendingResponse pending;
-    pending.data = response;
+    pending.data = finalResponse;
     _pendingResponses[clientFd] = pending;
     _clients[clientFd].processing = true;
 
@@ -586,18 +594,9 @@ void Server::_processRequest(int clientFd, const Request& request,
     }
 
     std::string response;
-    
+
     if (request.getMethod() == "GET" || request.getMethod() == "HEAD")
-    {
         response = _handleGet(*server, request, location);
-        
-        if (request.getMethod() == "HEAD")
-        {
-            std::size_t headerEnd = response.find("\r\n\r\n");
-            if (headerEnd != std::string::npos)
-                response.erase(headerEnd + 4);
-        }
-    }
     else if (request.getMethod() == "POST")
         response = _handlePost(*server, request, location);
     else
@@ -1073,43 +1072,19 @@ std::string Server::_handlePost(const ServerConfig& server,
 std::string Server::_handleDelete(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
-    const std::string fullPath =
-        _resolvePath(server, location, request.getPath());
+    const std::string fullPath = _resolvePath(server, location, request.getPath());
+    struct stat fileStat;
 
-    struct stat fileInfo;
+    if (stat(fullPath.c_str(), &fileStat) != 0)
+        return _buildErrorResponse(404, &server, location);
 
-    if (lstat(fullPath.c_str(), &fileInfo) == -1)
-    {
-        if (errno == ENOENT || errno == ENOTDIR)
-            return _buildErrorResponse(404, &server, location);
-
-        if (errno == EACCES)
-            return _buildErrorResponse(403, &server, location);
-
-        return _buildErrorResponse(500, &server, location);
-    }
-
-    // Este servidor solo permite DELETE sobre archivos regulares.
-    if (!S_ISREG(fileInfo.st_mode))
+    if (!S_ISREG(fileStat.st_mode))
         return _buildErrorResponse(403, &server, location);
 
-    if (unlink(fullPath.c_str()) == -1)
-    {
-        if (errno == ENOENT || errno == ENOTDIR)
-            return _buildErrorResponse(404, &server, location);
-
-        if (errno == EACCES || errno == EPERM || errno == EROFS)
-            return _buildErrorResponse(403, &server, location);
-
+    if (std::remove(fullPath.c_str()) != 0)
         return _buildErrorResponse(500, &server, location);
-    }
 
-    return _buildResponse(
-        204,
-        _statusText(204),
-        "",
-        ""
-    );
+    return _buildResponse(204, _statusText(204), "text/plain", "");
 }
 
 bool Server::_saveRawUpload(const Request& request,
