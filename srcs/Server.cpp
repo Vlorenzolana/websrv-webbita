@@ -1019,6 +1019,7 @@ std::string Server::_handleGet(const ServerConfig& server,
             if (!indexPath.empty() && indexPath[indexPath.size() - 1] != '/')
                 indexPath += '/';
             indexPath += location->index_files[i];
+            
             struct stat indexStat;
             if (stat(indexPath.c_str(), &indexStat) == 0 &&
                 S_ISREG(indexStat.st_mode))
