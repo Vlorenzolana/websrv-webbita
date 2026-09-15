@@ -112,7 +112,8 @@ void Request::_processRequestLine(const std::string& line)
         return;
     }
 
-    if (_method != "GET" && _method != "POST" && _method != "DELETE")
+    if (_method != "GET" && _method != "POST" && _method != "DELETE" && 
+    _method != "HEAD" && _method != "PUT")
     {
         _setError(501);
         return;

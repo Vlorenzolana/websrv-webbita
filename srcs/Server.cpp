@@ -586,12 +586,23 @@ void Server::_processRequest(int clientFd, const Request& request,
     }
 
     std::string response;
-    if (request.getMethod() == "GET")
+    
+    if (request.getMethod() == "GET" || request.getMethod() == "HEAD")
+    {
         response = _handleGet(*server, request, location);
+        
+        if (request.getMethod() == "HEAD")
+        {
+            std::size_t headerEnd = response.find("\r\n\r\n");
+            if (headerEnd != std::string::npos)
+                response.erase(headerEnd + 4);
+        }
+    }
     else if (request.getMethod() == "POST")
         response = _handlePost(*server, request, location);
     else
         response = _handleDelete(*server, request, location);
+
     _queueResponse(clientFd, response);
 }
 
@@ -903,7 +914,8 @@ bool Server::_isMethodAllowed(const LocationConfig* location,
         return false;
     for (std::size_t i = 0; i < location->allowed_methods.size(); ++i)
     {
-        if (location->allowed_methods[i] == method)
+        if (location->allowed_methods[i] == method || 
+            (location->allowed_methods[i] == "GET" && method == "HEAD"))
             return true;
     }
     return false;
