@@ -343,28 +343,15 @@ void Server::_handleCgiEvent(int pipeFd, unsigned int events)
         return;
 
     const bool isInput = reference->second.isInput;
-    if (isInput && (events & EPOLLOUT))
-        _handleCgiWritable(pipeFd);
-    else if (!isInput && (events & EPOLLIN))
+    if (isInput)
+    {
+        if (events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
+            _closeCgiPipe(pipeFd);
+        else if (events & EPOLLOUT)
+            _handleCgiWritable(pipeFd);
+    }
+    else if (events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP))
         _handleCgiReadable(pipeFd);
-
-    if (_cgiPipeRefs.find(pipeFd) == _cgiPipeRefs.end())
-        return;
-
-    if (events & EPOLLERR)
-    {
-        if (!isInput)
-            _handleCgiReadable(pipeFd);
-        if (_cgiPipeRefs.find(pipeFd) != _cgiPipeRefs.end())
-            _closeCgiPipe(pipeFd);
-    }
-    else if (events & (EPOLLHUP | EPOLLRDHUP))
-    {
-        if (isInput)
-            _closeCgiPipe(pipeFd);
-        else
-            _handleCgiReadable(pipeFd);
-    }
 }
 
 void Server::_handleCgiWritable(int pipeFd)
@@ -1034,7 +1021,7 @@ std::string Server::_handleGet(const ServerConfig& server,
             if (location->autoindex)
                 return _buildResponse(200, _statusText(200), "text/html",
                     _buildAutoindexPage(fullPath, request.getPath()));
-            return _buildErrorResponse(403, &server, location);
+            return _buildErrorResponse(404, &server, location);
         }
     }
     else if (!S_ISREG(fileStat.st_mode))
