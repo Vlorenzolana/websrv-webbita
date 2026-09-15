@@ -913,8 +913,7 @@ bool Server::_isMethodAllowed(const LocationConfig* location,
         return false;
     for (std::size_t i = 0; i < location->allowed_methods.size(); ++i)
     {
-        if (location->allowed_methods[i] == method || 
-            (location->allowed_methods[i] == "GET" && method == "HEAD"))
+        if (location->allowed_methods[i] == method)
             return true;
     }
     return false;
