@@ -993,12 +993,25 @@ std::string Server::_handleGet(const ServerConfig& server,
 {
     std::string fullPath =
         _resolvePath(server, location, request.getPath());
+
     struct stat fileStat;
     if (stat(fullPath.c_str(), &fileStat) != 0)
         return _buildErrorResponse(404, &server, location);
 
     if (S_ISDIR(fileStat.st_mode))
     {
+        if (!request.getPath().empty() && request.getPath()[request.getPath().size() - 1] != '/')
+        {
+            std::map<std::string, std::string> headers;
+            std::string host = request.getHeaderValue("host");
+            if (host.empty())
+                host = server.host + ":" + _intToString(server.port);
+            
+            headers["Location"] = "http://" + host + request.getPath() + "/";
+            return _buildResponse(301, _statusText(301), "text/html",
+                _defaultErrorBody(301, _statusText(301)), headers);
+        }
+
         bool foundIndex = false;
         for (std::size_t i = 0; i < location->index_files.size(); ++i)
         {
