@@ -170,7 +170,7 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
     {
         if (dup2(inputPipe[0], STDIN_FILENO) < 0 ||
             dup2(outputPipe[1], STDOUT_FILENO) < 0)
-            _exit(126);
+            exit(126);
 
         close(inputPipe[0]);
         close(inputPipe[1]);
@@ -182,7 +182,7 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
         const std::string scriptName = _baseName(_scriptPath);
 
         if (chdir(directory.c_str()) < 0)
-            _exit(126);
+            exit(126);
 
         char* arguments[3];
         arguments[0] = const_cast<char*>(_interpreterPath.c_str());
@@ -192,7 +192,7 @@ bool CGIHandler::execute(const Request& request, const std::string& uploadPath,
         execve(arguments[0], arguments, envp);
 
         _freeEnvp(envp);
-        _exit(127);
+        exit(127);
     }
 
     _freeEnvp(envp);

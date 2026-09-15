@@ -1,3 +1,114 @@
-<!doctype html>
-<html><head><meta charset="utf-8"><title>webserv</title></head>
-<body><h1>webserv is running</h1></body></html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webserv Evaluation Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        function copyCommand(id) {
+            const text = document.getElementById(id).innerText;
+            navigator.clipboard.writeText(text);
+            alert("¡Comando copiado al portapapeles!");
+        }
+
+        async function testDelete() {
+            const filename = prompt("Introduce el nombre del archivo a borrar (ej. raw.bin):");
+            if (filename) {
+                const response = await fetch('/uploads/' + filename, { method: 'DELETE' });
+                alert(`Código de respuesta: ${response.status} ${response.statusText}`);
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans p-8">
+
+    <div class="max-w-5xl mx-auto space-y-8">
+        <header class="border-b border-slate-700 pb-4">
+            <h1 class="text-4xl font-bold text-teal-400">Webserv Dashboard</h1>
+            <p class="text-slate-400 mt-2">Panel de control interactivo para la evaluación de 42.</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            <!-- PRUEBAS INTERACTIVAS -->
+            <section class="bg-slate-800 p-6 rounded-lg shadow-lg space-y-6">
+                <h2 class="text-2xl font-semibold text-white border-b border-slate-600 pb-2">1. Pruebas Interactivas</h2>
+                
+                <!-- CGI y Rutas -->
+                <div class="space-y-2">
+                    <h3 class="text-lg text-teal-300">Navegación y CGI</h3>
+                    <div class="flex flex-wrap gap-3">
+                        <a href="/missing-page-test" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm transition">Test Error 404</a>
+                        <a href="/uploads/" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm transition">Ver Autoindex (/uploads/)</a>
+                        <a href="/cgi-bin/echo.py?evaluacion=completada&user=Oian" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm text-white transition">CGI: GET Request</a>
+                    </div>
+                </div>
+
+                <!-- Formularios -->
+                <div class="space-y-4">
+                    <h3 class="text-lg text-teal-300">CGI: POST Request</h3>
+                    <form action="/cgi-bin/echo.py" method="POST" class="flex gap-2">
+                        <input type="text" name="mensaje" placeholder="Escribe algo..." class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:border-teal-400">
+                        <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-white transition">Enviar POST</button>
+                    </form>
+                </div>
+
+                <div class="space-y-4">
+                    <h3 class="text-lg text-teal-300">Subida de Archivos (Upload)</h3>
+                    <form action="/uploads/subida_interactiva.txt" method="POST" enctype="multipart/form-data" class="flex flex-col gap-3">
+                        <input type="file" name="file" class="text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600">
+                        <button type="submit" class="w-fit px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white transition">Subir Archivo</button>
+                    </form>
+                </div>
+
+                <div class="space-y-2">
+                    <h3 class="text-lg text-teal-300">Borrado de Archivos (DELETE)</h3>
+                    <button onclick="testDelete()" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 rounded text-white text-sm transition">Ejecutar método DELETE</button>
+                </div>
+            </section>
+
+            <!-- CHEAT SHEET TERMINAL -->
+            <section class="bg-slate-800 p-6 rounded-lg shadow-lg space-y-6">
+                <h2 class="text-2xl font-semibold text-white border-b border-slate-600 pb-2">2. Comandos de Terminal</h2>
+                <p class="text-sm text-slate-400">Haz clic en "Copiar" y pégalo en la terminal del evaluador.</p>
+
+                <!-- Comandos -->
+                <div class="space-y-4">
+                    
+                    <div class="bg-slate-900 rounded p-3 relative group">
+                        <span class="text-xs text-slate-500 block mb-1">Método Desconocido (Anti-Crash):</span>
+                        <code id="cmd1" class="text-green-400 text-sm">curl -i -X INVENTO http://127.0.0.1:8081/</code>
+                        <button onclick="copyCommand('cmd1')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
+                    </div>
+
+                    <div class="bg-slate-900 rounded p-3 relative group">
+                        <span class="text-xs text-slate-500 block mb-1">Límite de Body (Error 413):</span>
+                        <code id="cmd2" class="text-green-400 text-sm">curl -i -X POST -H "Content-Type: text/plain" --data "Texto gigante" http://127.0.0.1:8081/</code>
+                        <button onclick="copyCommand('cmd2')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
+                    </div>
+
+                    <div class="bg-slate-900 rounded p-3 relative group">
+                        <span class="text-xs text-slate-500 block mb-1">Upload Binario Puro por curl:</span>
+                        <code id="cmd3" class="text-green-400 text-sm">curl -i -X POST --data-binary @webserv http://127.0.0.1:8081/uploads/webserv_copy</code>
+                        <button onclick="copyCommand('cmd3')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
+                    </div>
+
+                    <div class="bg-slate-900 rounded p-3 relative group">
+                        <span class="text-xs text-slate-500 block mb-1">Path Traversal (Seguridad 403/404):</span>
+                        <code id="cmd4" class="text-green-400 text-sm">curl -i --path-as-is http://127.0.0.1:8081/../../../../etc/passwd</code>
+                        <button onclick="copyCommand('cmd4')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
+                    </div>
+
+                    <div class="bg-slate-900 rounded p-3 relative group">
+                        <span class="text-xs text-slate-500 block mb-1">Prueba de Estrés (Siege):</span>
+                        <code id="cmd5" class="text-green-400 text-sm">siege -b -c 100 -t 30S http://127.0.0.1:8081/</code>
+                        <button onclick="copyCommand('cmd5')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
+                    </div>
+
+                </div>
+            </section>
+        </div>
+    </div>
+</body>
+</html>
