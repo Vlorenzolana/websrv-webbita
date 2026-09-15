@@ -95,9 +95,9 @@ private:
     std::map<int, CgiPipeRef> _cgiPipeRefs;
 
     static const int CLIENT_TIMEOUT_SECONDS = 30;
-    static const int CGI_TIMEOUT_SECONDS = 10;
+    static const int CGI_TIMEOUT_SECONDS = 120;
     static const std::size_t CGI_MAX_PROCESSES = 16;
-    static const std::size_t CGI_MAX_OUTPUT_SIZE = 16 * 1024 * 1024;
+    static const std::size_t CGI_MAX_OUTPUT_SIZE = 128 * 1024 * 1024;
 
     static bool _setNonBlocking(int fd);
     static bool _setCloseOnExec(int fd);
