@@ -599,7 +599,11 @@ bool Server::_startCgi(int clientFd, const Request& request,
         access(fullPath.c_str(), R_OK) != 0)
         return false;
 
-    CGIHandler handler(fullPath, interpreter);
+    const std::size_t slash = interpreter.find_last_of('/');
+    const std::string name = interpreter.substr(slash == std::string::npos
+        ? 0 : slash + 1);
+    CGIHandler handler(fullPath, interpreter,
+        name == "cgi_tester" || name == "cgi_test");
     CgiProcess process;
     if (!handler.execute(request, location->upload_path, server.server_name,
             server.port, process))
@@ -966,9 +970,8 @@ bool Server::_findCgiInterpreter(const LocationConfig* location,
     const std::size_t dot = fullPath.find_last_of('.');
     if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
         return false;
-    const std::string extension = fullPath.substr(dot);
     const std::map<std::string, std::string>::const_iterator it =
-        location->cgi_interpreters.find(extension);
+        location->cgi_interpreters.find(fullPath.substr(dot));
     if (it == location->cgi_interpreters.end())
         return false;
     interpreter = it->second;
@@ -1040,7 +1043,14 @@ std::string Server::_handlePost(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
     if (location->upload_path.empty())
+    {
+        const std::string fullPath =
+            _resolvePath(server, location, request.getPath());
+        struct stat fileStat;
+        if (stat(fullPath.c_str(), &fileStat) != 0)
+            return _buildErrorResponse(404, &server, location);
         return _buildErrorResponse(403, &server, location);
+    }
 
     const std::string contentType = _toLower(request.getHeaderValue("content-type"));
     std::vector<std::string> savedNames;

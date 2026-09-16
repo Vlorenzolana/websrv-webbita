@@ -401,13 +401,13 @@ Demostrar tambien:
 
 ### 3. CGI obligatorio: demostrar primero el caso sencillo
 
-El caso sencillo debe poder demostrarse con una sola extension y un solo interprete. La configuracion minima de la location seria, por ejemplo:
+Los archivos ejecutables de la location CGI se ejecutan directamente y deben
+incluir su propio `shebang`. La configuracion minima de la location es:
 
 ```nginx
 location /cgi-bin {
     allowed_methods GET POST;
     root ./www/cgi-bin;
-    cgi_extension .py /usr/bin/python3;
 }
 ```
 
@@ -432,11 +432,11 @@ No hace falta mantener dos implementaciones distintas. Es mejor conservar un uni
 
 ### 4. Bonus: multiples CGI
 
-El bonus actual se demuestra con dos extensiones y dos interpretes:
+El bonus se demuestra colocando varios ejecutables con `shebang` distintos en
+la misma location:
 
 ```nginx
-cgi_extension .py /usr/bin/python3;
-cgi_extension .sh /bin/bash;
+# No se necesita una directiva por extension.
 ```
 
 Pruebas sugeridas:
@@ -446,7 +446,9 @@ curl -i http://127.0.0.1:8081/cgi-bin/echo.py
 curl -i http://127.0.0.1:8081/cgi-bin/echo.sh
 ```
 
-La respuesta que conviene dar en la correccion es: el caso sencillo es el mismo mecanismo con una sola entrada `cgi_extension`; el bonus es la tabla de extension a interprete con varias entradas. Preparar ambos escenarios en configuraciones o comandos separados es suficiente y es mas defendible que duplicar `CGIHandler`.
+La respuesta que conviene dar en la correccion es: el servidor ejecuta los
+archivos CGI directamente mediante su `shebang`, sin una tabla inventada de
+extensiones e interpretes.
 
 ## Puntos que aun toca trabajar antes de la correccion
 
@@ -473,7 +475,7 @@ Prioridad baja, pero recomendable:
 - Repetir el smoke test varias veces para detectar carreras.
 - Probar cierres abruptos del cliente durante upload y durante CGI.
 - Verificar que no quedan archivos de prueba en `www/uploads` ni scripts temporales en `www/cgi-bin`.
-- Tener preparada una explicacion breve de los limites: timeout CGI de 10 s y salida CGI maxima de 16 MiB.
+- Tener preparada una explicacion breve de los limites: timeout CGI de 10 s y salida CGI maxima de 128 MiB.
 
 ## Checklist de la mesa
 

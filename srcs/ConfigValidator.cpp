@@ -124,10 +124,8 @@ void ConfigValidator::_validateAndNormalizeLocations(ServerConfig& server)
         for (std::map<std::string, std::string>::const_iterator it =
                  location.cgi_interpreters.begin();
              it != location.cgi_interpreters.end(); ++it)
-        {
             if (access(it->second.c_str(), X_OK) != 0)
                 throw std::runtime_error("CGI interpreter is missing or not executable: " + it->second);
-        }
 
         _validateErrorPages(location.error_pages, location.root_directory);
     }

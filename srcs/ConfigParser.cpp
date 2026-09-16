@@ -274,9 +274,7 @@ void ConfigParser::_processLocationLine(LocationConfig& location,
         _parseErrorPage(location.error_pages, cleanTokens, line);
     }
     else if (directive == "cgi_extension")
-    {
         _parseCgiExtension(location, cleanTokens);
-    }
     else
     {
         throw std::runtime_error("Unknown or invalid location directive: " + line);
@@ -370,23 +368,19 @@ void ConfigParser::_parseLocationBasic(LocationConfig& location,
         throw std::runtime_error("Invalid location directive syntax: " + tokens[0]);
 }
 
-// Parses CGI extension and corresponding binary interpreter path
 void ConfigParser::_parseCgiExtension(LocationConfig& location,
     const std::vector<std::string>& tokens)
 {
     if (tokens.size() != 3)
         throw std::runtime_error("cgi_extension syntax: cgi_extension .ext /path/interpreter;");
-
     std::string extension = tokens[1];
     if (extension.empty())
         throw std::runtime_error("Empty CGI extension");
     if (extension[0] != '.')
         extension = "." + extension;
-
-    const std::string& interpreter = tokens[2];
-    if (interpreter.empty())
+    if (tokens[2].empty())
         throw std::runtime_error("Empty CGI interpreter path");
-    location.cgi_interpreters[extension] = interpreter;
+    location.cgi_interpreters[extension] = tokens[2];
 }
 
 // Converts a string port to integer and validates the valid range (1..65535)

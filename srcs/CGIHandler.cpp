@@ -7,14 +7,10 @@
 #include <unistd.h>
 
 CGIHandler::CGIHandler(const std::string& scriptPath,
-    const std::string& interpreterPath)
-    : _scriptPath(scriptPath), _interpreterPath(interpreterPath),
-      _directExecutable(false)
+        const std::string& interpreterPath, bool directExecutable)
+        : _scriptPath(scriptPath), _interpreterPath(interpreterPath),
+            _directExecutable(directExecutable)
 {
-    const std::size_t slash = interpreterPath.find_last_of('/');
-    const std::string name = interpreterPath.substr(slash == std::string::npos
-        ? 0 : slash + 1);
-    _directExecutable = name == "cgi_tester" || name == "cgi_test";
 }
 
 CGIHandler::~CGIHandler(void)

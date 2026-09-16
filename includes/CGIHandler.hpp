@@ -21,7 +21,7 @@ class CGIHandler
 public:
     // Orthodox Canonical Form
     CGIHandler(const std::string& scriptPath,
-        const std::string& interpreterPath);
+        const std::string& interpreterPath, bool directExecutable);
     ~CGIHandler();
 
     // Execution entry point

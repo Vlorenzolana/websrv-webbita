@@ -16,7 +16,7 @@
 - El límite CGI devuelve `503 Service Unavailable` con el texto HTTP estándar.
 - Los procesos terminados se revisan con `waitpid(..., WNOHANG)` para evitar
     zombies y permitir que el servidor continúe atendiendo conexiones.
-- Se mantiene el timeout de CGI de 10 segundos y el límite de salida de 16 MiB.
+- Se mantiene el timeout de CGI de 10 segundos y el límite de salida de 128 MiB.
 
 La compilación y el smoke test fueron ejecutados en WSL porque el proyecto usa
 `fork`, `pipe`, `epoll` y `waitpid`:
@@ -99,12 +99,14 @@ arguments[2] = NULL;
 execve(arguments[0], arguments, envp);
 ```
 
-- Mapeo del intérprete por ubicación mediante `cgi_extension`.
+- Los ejecutables CGI se lanzan directamente desde la location CGI y resuelven
+    su intérprete mediante el `shebang` del propio archivo.
 
 ```cpp
-// srcs/ConfigParser.cpp
-else if (tokens[0] == "cgi_extension")
-    _parseCgiExtension(location, tokens);
+// srcs/CGIHandler.cpp
+arguments[0] = const_cast<char*>(_scriptPath.c_str());
+arguments[1] = NULL;
+execve(arguments[0], arguments, envp);
 ```
 
 - Parseo incremental de HTTP con cabeceras insensibles a mayúsculas/minúsculas y decodificación de chunked.
@@ -229,8 +231,6 @@ _checkTimeouts();
 ```nginx
     allowed_methods GET POST;
     upload_path ./www/uploads;
-    cgi_extension .py /usr/bin/python3;
-    cgi_extension .sh /bin/bash;
 ```
 ### Prueba rápida incluida
 
