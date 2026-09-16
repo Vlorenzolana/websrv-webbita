@@ -1083,11 +1083,16 @@ std::string Server::_handleDelete(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
     const std::string fullPath = _resolvePath(server, location, request.getPath());
+    const int fileFd = open(fullPath.c_str(), O_RDONLY | O_NOFOLLOW);
+    if (fileFd < 0)
+        return _buildErrorResponse(errno == ELOOP ? 403 : 404, &server, location);
+    close(fileFd);
+
     struct stat fileStat;
     if (stat(fullPath.c_str(), &fileStat) != 0)
         return _buildErrorResponse(404, &server, location);
 
-    if (!S_ISREG(fileStat.st_mode))
+    if (!S_ISREG(fileStat.st_mode) || S_ISLNK(fileStat.st_mode))
         return _buildErrorResponse(403, &server, location);
 
     if (std::remove(fullPath.c_str()) != 0)

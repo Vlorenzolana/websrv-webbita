@@ -1,681 +1,1032 @@
-﻿# Continuación del trabajo
+﻿Orden real del código: conexión, lectura, selección del virtual host, validaciones, CGI o recurso estático, y finalmente respuesta mediante `epoll`. También distinguiré qué ocurre cuando cambian la IP, el puerto o el archivo de configuración.
 
-## Cambio reciente: límite y drenaje de CGI
+Read , lines 500 to 625
 
-- Se limita a 16 el número de procesos CGI activos simultáneamente. Cada CGI
-    puede registrar uno o dos pipes en `epoll`: salida y, si tiene body, entrada.
-    Las peticiones que superarían el límite de procesos reciben `503`.
-- Los extremos del padre se mantienen en modo no bloqueante y conservan las
-    flags existentes del descriptor al añadir `O_NONBLOCK`.
-- Cada evento de `epoll` realiza como máximo una lectura o escritura no
-    bloqueante. Como el registro es level-triggered, `epoll` vuelve a notificar
-    mientras quede trabajo pendiente, sin consultar `errno` después de
-    `read` o `write`.
-- Los sockets de cliente aplican el mismo criterio: un `recv()` o `send()` por
-    evento de `epoll`, con offsets para continuar respuestas parciales.
-- El límite CGI devuelve `503 Service Unavailable` con el texto HTTP estándar.
-- Los procesos terminados se revisan con `waitpid(..., WNOHANG)` para evitar
-    zombies y permitir que el servidor continúe atendiendo conexiones.
-- Se mantiene el timeout de CGI de 10 segundos y el límite de salida de 128 MiB.
+Read , lines 670 to 850
 
-La compilación y el smoke test fueron ejecutados en WSL porque el proyecto usa
-`fork`, `pipe`, `epoll` y `waitpid`:
+Read , lines 1080 to 1240
+
+Read , lines 270 to 340
+
+## 1. Flujo general de una petición
+
+Cuando un cliente hace:
+
+```bash
+curl -X POST --data-binary @archivo.txt \
+  http://127.0.0.1:8081/uploads/archivo.txt
+```
+
+el flujo de tu servidor es:
 
 ```text
-All smoke tests passed on port 18080.
+socket de escucha
+    |
+    v
+accept()
+    |
+    v
+cliente registrado en epoll
+    |
+    v
+recv()
+    |
+    v
+Request::parse()
+    |
+    v
+selección del virtual host
+    |
+    v
+selección de location
+    |
+    v
+comprobación body size
+    |
+    v
+comprobación del método
+    |
+    v
+comprobación de seguridad de la ruta
+    |
+    v
+¿es CGI?
+    |       \
+   sí       no
+    |        |
+   CGI    GET / POST / DELETE
 ```
 
-## 1. Correcciones implementadas
+---
 
-### Compilación y ejecución
+# 2. ¿Cómo funciona `epoll`?
 
-```sh
-make
-./webserv config/webserv.conf
+## ¿Qué es un descriptor?
+
+En Linux, muchas cosas se representan con un número entero llamado **file descriptor**:
+
+```text
+socket de escucha       -> descriptor
+conexión de un cliente   -> descriptor
+pipe del CGI             -> descriptor
+archivo abierto         -> descriptor
 ```
 
-### Correcciones principales
-
-- I/O de clientes alineado con el modelo CGI: `_handleClientReadable()` hace
-    un único `recv()` por evento `EPOLLIN` y `_flushResponse()` hace un único
-    `send()` por evento `EPOLLOUT`. Los offsets permiten continuar una lectura
-    de petición o una respuesta parcial en la siguiente notificación de
-    `epoll`, sin loops adicionales sobre el mismo descriptor.
-
-- Límite CGI con respuesta HTTP estándar: cuando ya hay 16 procesos CGI
-    activos, la petición nueva recibe `503 Service Unavailable`. El texto de
-    estado también se usa en el cuerpo HTML de error si no hay una página
-    personalizada configurada.
-
-- Sockets de cliente y pipes de CGI en modo no bloqueante, integrados con `epoll`.
+Tu servidor mantiene mapas para saber qué representa cada descriptor:
 
 ```cpp
-// srcs/Server.cpp
-bool Server::_setNonBlocking(int fd)
+std::map<int, ListenerState> _listeners;
+std::map<int, ClientState> _clients;
+std::map<int, CgiPipeRef> _cgiPipeRefs;
+```
+
+Por ejemplo:
+
+```text
+fd 4 -> listener en 127.0.0.1:8081
+fd 5 -> cliente HTTP
+fd 6 -> stdout de un CGI
+fd 7 -> stdin de un CGI
+```
+
+## ¿Por qué no necesita un hilo por conexión?
+
+Sin `epoll`, una aproximación simple sería:
+
+```text
+crear un hilo para cliente 1
+crear un hilo para cliente 2
+crear un hilo para cliente 3
+...
+```
+
+Eso consume más memoria y aumenta la complejidad.
+
+Con `epoll`, tienes un solo bucle principal:
+
+```cpp
+while (true)
 {
-    const int flags = fcntl(fd, F_GETFL, 0);
-    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
+    epoll_wait(...);
+    procesar eventos;
 }
 ```
 
+El kernel vigila todos los descriptores registrados y solo despierta al servidor cuando alguno está listo.
+
+El servidor no pregunta continuamente:
+
+```text
+¿cliente 1 tiene datos?
+¿cliente 2 tiene datos?
+¿cliente 3 tiene datos?
+```
+
+En lugar de eso, el kernel le devuelve directamente:
+
+```text
+fd 5 está listo para leer
+fd 6 está listo para leer
+fd 8 está listo para escribir
+```
+
+Por eso `epoll` escala mejor que revisar conexión por conexión.
+
+---
+
+# 3. Los tres tipos principales de eventos
+
+En tu `Server::run()`:
+
 ```cpp
-// srcs/CGIHandler.cpp
-bool CGIHandler::_setNonBlocking(int fd)
+const int count = epoll_wait(_epollFd, events, 128, 1000);
+```
+
+Después se revisa cada descriptor:
+
+```cpp
+if (_listeners.find(fd) != _listeners.end())
+    _acceptClients(fd);
+else if (_cgiPipeRefs.find(fd) != _cgiPipeRefs.end())
+    _handleCgiEvent(fd, events[i].events);
+else if (_clients.find(fd) != _clients.end())
+    _handleClientEvent(fd, events[i].events);
+```
+
+## Caso A: es un listener
+
+```text
+¿Es un listener?
+    |
+    +-- sí -> aceptar clientes nuevos
+```
+
+El listener es el socket que escucha en:
+
+```text
+127.0.0.1:8081
+```
+
+Se registra con:
+
+```cpp
+event.events = EPOLLIN;
+```
+
+En el listener, `EPOLLIN` significa:
+
+```text
+hay una conexión nueva esperando
+```
+
+Entonces se llama a:
+
+```cpp
+_acceptClients(listenerFd);
+```
+
+Dentro se ejecuta:
+
+```cpp
+accept(listenerFd, NULL, NULL);
+```
+
+Esto crea un nuevo descriptor para el cliente.
+
+Ejemplo:
+
+```text
+fd 4 -> listener 127.0.0.1:8081
+fd 5 -> cliente nuevo
+```
+
+El nuevo cliente se añade a `epoll`:
+
+```cpp
+event.events = EPOLLIN | EPOLLRDHUP;
+epoll_ctl(_epollFd, EPOLL_CTL_ADD, clientFd, &event);
+```
+
+Y se guarda información sobre él:
+
+```cpp
+state.listenPort = listener->second.port;
+state.listenHost = listener->second.host;
+```
+
+Esto es importante porque después permite saber por qué listener entró la conexión.
+
+---
+
+## Caso B: es un cliente
+
+```text
+¿Es un cliente?
+    |
+    +-- EPOLLIN  -> leer petición
+    +-- EPOLLOUT -> enviar respuesta
+    +-- EPOLLRDHUP -> cliente cerró conexión
+```
+
+`EPOLLIN` significa que el cliente ha enviado datos.
+
+Entonces se llama a:
+
+```cpp
+_handleClientReadable(clientFd);
+```
+
+El servidor recibe una parte de la petición:
+
+```cpp
+recv(clientFd, buffer, sizeof(buffer), 0);
+```
+
+El buffer tiene `8192` bytes, pero una petición puede ser más grande o llegar fragmentada.
+
+Por eso los datos se pasan progresivamente a:
+
+```cpp
+client->second.request.parse(...);
+```
+
+Ejemplo de una petición dividida:
+
+```text
+recv 1:
+POST /uploads/file.txt HTTP/1.1
+
+recv 2:
+Host: localhost
+Content-Length: 10
+
+recv 3:
+Hola mundo
+```
+
+`Request` va acumulando todo hasta que la petición está completa.
+
+Cuando termina:
+
+```cpp
+_processRequest(...)
+```
+
+procesa la petición.
+
+---
+
+## Caso C: es un pipe de CGI
+
+```text
+¿Es un pipe de CGI?
+    |
+    +-- pipe de entrada -> escribir body hacia CGI
+    +-- pipe de salida  -> leer respuesta del CGI
+```
+
+Cuando se ejecuta un CGI, tienes dos direcciones:
+
+```text
+servidor -> stdin del CGI
+stdout del CGI -> servidor
+```
+
+El servidor registra los pipes en `epoll`.
+
+Para el pipe de salida:
+
+```cpp
+outputEvent.events = EPOLLIN | EPOLLRDHUP;
+```
+
+Esto significa:
+
+```text
+el CGI produjo datos para leer
+```
+
+Para el pipe de entrada:
+
+```cpp
+inputEvent.events = EPOLLOUT | EPOLLRDHUP;
+```
+
+Esto significa:
+
+```text
+el pipe puede recibir más datos
+```
+
+Así el servidor puede atender simultáneamente:
+
+```text
+cliente A haciendo GET
+cliente B enviando POST
+cliente C ejecutando CGI
+cliente D descargando un archivo
+```
+
+sin crear un hilo individual para cada conexión.
+
+---
+
+# 4. Flujo de comprobación del body size
+
+Hay dos momentos importantes.
+
+## Primer momento: después de leer las cabeceras
+
+Cuando ya están disponibles las cabeceras:
+
+```cpp
+_updateClientBodyLimit(clientFd);
+```
+
+El servidor ya puede leer el header:
+
+```http
+Host: limited.localhost
+Content-Length: 2048
+```
+
+Con el `Host`, selecciona el virtual host correcto y obtiene su:
+
+```conf
+client_max_body_size 1K;
+```
+
+Entonces actualiza el límite del objeto `Request`.
+
+## Segundo momento: al procesar la petición
+
+En `_processRequest()` se comprueba:
+
+```cpp
+if (server->client_max_body_size > 0 &&
+    request.getBody().size() >
+        static_cast<std::size_t>(server->client_max_body_size))
 {
-    const int flags = fcntl(fd, F_GETFL, 0);
-    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
-}
-```
-
-- Recolección de procesos hijo con `waitpid(..., WNOHANG)` y timeout de 10 segundos.
-
-```cpp
-// srcs/Server.cpp
-for (std::map<pid_t, CgiState>::iterator it = _cgiByPid.begin();
-     it != _cgiByPid.end(); ++it)
-{
-    if (!it->second.childExited && it->second.childPid > 0)
-    {
-        if (kill(-it->second.childPid, SIGKILL) < 0)
-            kill(it->second.childPid, SIGKILL);
-        waitpid(it->second.childPid, NULL, WNOHANG);
-    }
-}
-```
-
-- Ejecución de CGI conectada al routing de GET/POST y ejecutada desde el directorio del script.
-
-```cpp
-// srcs/CGIHandler.cpp
-const std::string directory = _directoryName(_scriptPath);
-const std::string scriptName = _baseName(_scriptPath);
-if (chdir(directory.c_str()) < 0)
-    _exit(126);
-
-char* arguments[3];
-arguments[0] = const_cast<char*>(_interpreterPath.c_str());
-arguments[1] = const_cast<char*>(scriptName.c_str());
-arguments[2] = NULL;
-execve(arguments[0], arguments, envp);
-```
-
-- Los ejecutables CGI se lanzan directamente desde la location CGI y resuelven
-    su intérprete mediante el `shebang` del propio archivo.
-
-```cpp
-// srcs/CGIHandler.cpp
-arguments[0] = const_cast<char*>(_scriptPath.c_str());
-arguments[1] = NULL;
-execve(arguments[0], arguments, envp);
-```
-
-- Parseo incremental de HTTP con cabeceras insensibles a mayúsculas/minúsculas y decodificación de chunked.
-
-```cpp
-// srcs/Request.cpp
-const std::string transferEncoding = _toLower(getHeaderValue("transfer-encoding"));
-if (!transferEncoding.empty())
-{
-    if (transferEncoding != "chunked")
-    {
-        _setError(501);
-        return;
-    }
-    _isChunkedBody = true;
-    _parsingState = PARSE_CHUNK_SIZE;
+    _sendErrorResponse(clientFd, 413, server, location);
     return;
 }
 ```
 
-- Aplicación temprana de `client_max_body_size`.
+Si el body supera el límite:
 
-```cpp
-// srcs/Request.cpp
-if (_maxBodySize > 0 && _contentLength > _maxBodySize)
-{
-    _setError(413);
-    return;
-}
+```text
+413 Payload Too Large
 ```
 
-- Host y puerto de escucha configurables.
+El flujo se detiene ahí. No se ejecuta CGI ni se guarda un upload.
 
-- Resolución del host de escucha mediante `getaddrinfo` y `freeaddrinfo`, en
-    lugar de `inet_pton`, con mensajes de error propios.
+Ejemplo:
 
-```cpp
-struct addrinfo hints;
-struct addrinfo* addresses = NULL;
-std::memset(&hints, 0, sizeof(hints));
-hints.ai_family = AF_INET;
-hints.ai_socktype = SOCK_STREAM;
-hints.ai_flags = AI_PASSIVE;
-
-getaddrinfo(server.host.c_str(), port.c_str(), &hints, &addresses);
-freeaddrinfo(addresses);
+```conf
+client_max_body_size 1K;
 ```
 
-```cpp
-// srcs/ConfigParser.cpp
-void ConfigParser::_parseListen(ServerConfig& server, const std::string& value)
-{
-    const std::string clean = _withoutSemicolon(value);
-    const std::size_t colon = clean.rfind(':');
-    if (colon == std::string::npos)
-    {
-        server.port = _parsePort(clean);
-        return;
-    }
+y una petición de `2048` bytes:
 
-    const std::string host = clean.substr(0, colon);
-    const std::string port = clean.substr(colon + 1);
-    server.host = host;
-    server.port = _parsePort(port);
-}
+```text
+body = 2048 bytes
+limit = 1024 bytes
+2048 > 1024
+respuesta = 413
 ```
 
-- Páginas de error personalizadas para los códigos HTTP que puede generar el
-    servidor. Se mantienen páginas específicas para `400`, `403`, `404`, `405`,
-    `413`, `414`, `431`, `501`, `503` y `505`, además de la página común `50x.html`
-    para `500` y `504`.
+Si el valor es:
 
-```cpp
-// srcs/ConfigParser.cpp
-else if (tokens[0] == "error_page")
-    _parseErrorPage(server.error_pages, line);
+```conf
+client_max_body_size 0;
 ```
 
-```nginx
-error_page 400 /errors/400.html;
-error_page 403 /errors/403.html;
-error_page 405 /errors/405.html;
-error_page 413 /errors/413.html;
-error_page 414 /errors/414.html;
-error_page 431 /errors/431.html;
-error_page 404 /errors/404.html;
-error_page 501 /errors/501.html;
-error_page 503 /errors/503.html;
-error_page 505 /errors/505.html;
-error_page 500 504 /errors/50x.html;
-```
+en tu código significa sin límite.
 
-El servidor carga la página configurada para el código y, si no existe una
-configuración específica, genera un cuerpo HTML de error por defecto. Los
-errores de arranque usan mensajes propios, por ejemplo `Invalid listen host`,
-`Could not bind listener`, `Could not start listener` y `Could not register
-listener in epoll`, sin convertir `errno` en texto mediante `strerror`.
+---
 
-- Subidas binarias y multipart/form-data.
+# 5. Comprobación de métodos
+
+Después del body size se busca la `location` correspondiente:
 
 ```cpp
-// tests/smoke_test.sh
-curl -X POST --data-binary @"$TMP_DIR/raw.bin" \
-    "http://127.0.0.1:${PORT}/uploads/raw.bin"
+const LocationConfig* location =
+    _matchLocation(*server, request.getPath());
 ```
 
-- Escritura de respuestas solo tras recibir un evento `EPOLLOUT`.
+Por ejemplo:
 
-```cpp
-// srcs/Server.cpp
-if ((events & EPOLLOUT) &&
-    _pendingResponses.find(clientFd) != _pendingResponses.end())
-    _handleClientWritable(clientFd);
+```text
+/uploads/file.txt
 ```
 
-- Timeout de clientes inactivos y limpieza de descriptores con un único propietario.
+coincide con:
 
-```cpp
-// srcs/Server.cpp
-_checkTimeouts();
-
-```nginx
+```conf
+location /uploads {
     allowed_methods GET POST;
-    upload_path ./www/uploads;
-```
-### Prueba rápida incluida
-
-```sh
-make test
-```
-
-El script usa el puerto 18080 por defecto. Si queremos se puede pasar otro puerto directamente:
-
-```sh
-./tests/smoke_test.sh 18090
-```
-
-El smoke test incluye:
-
-- Puerto configurable, partiendo de `127.0.0.1:8081` en la configuración real.
-- Peticiones fragmentadas byte a byte.
-- Comprobaciones de `405`, `413`, `501` y `403`.
-- Configuración de páginas personalizadas para `400`, `403`, `404`, `405`,
-  `413`, `414`, `431`, `501` y `505`, además de `500` y `504`; el smoke test
-  verifica explícitamente el cuerpo personalizado de `404` y los códigos de
-  respuesta de varios casos negativos.
-- Prueba de `DELETE` y confirmación de que el archivo se elimina.
-- Pruebas de concurrencia repetidas.
-- Uploads binarios y multipart, transferencia chunked, CGI, timeout `504` y
-    detección de procesos zombie.
-
-La ejecución verificada es:
-
-```text
-All smoke tests passed on port 18080.
-```
-
-## 2. Verificación realizada
-
-### Comprobado:
-
-- Compilación correcta:
-    - Comando ejecutado: `make`
-  - Resultado: se generó el binario `webserv` y la compilación terminó con éxito.
-
-- Funcionalidad básica verificada en ejecución real:
-    - Las peticiones de la prueba smoke se ejecutaron en el puerto configurable
-        `18080` y devolvieron los códigos esperados.
-    - La configuración base usa `127.0.0.1:8081`; el smoke test la adapta al
-        puerto indicado sin modificar el archivo original.
-
-### Puntos del código que cumplen
-
-- Makefile:
-  - Define `NAME = webserv`
-  - Tiene `all`, `clean`, `fclean` y `re`
-  - Usa `-std=c++98`
-
-- main.cpp:
-  - Acepta un archivo de configuración como argumento y usa uno por defecto si no se pasa.
-
-- Server.cpp:
-    - Usa `epoll` (`epoll_create`, `epoll_ctl`, `epoll_wait`)
-    - Usa `fcntl` para conservar las flags existentes y añadir `O_NONBLOCK`
-
-- CGIHandler.cpp:
-  - Implementa el flujo CGI con `fork`, `pipe`, `dup2` y `execve`
-
-### Estado final
-
-- ✅ Cumple los puntos principales y más críticos del subject.
-- ⚠️ La comprobación exhaustiva de fugas de descriptores, permisos y algunas
-    variantes de configuración requiere pruebas manuales adicionales.
-
-### Validación del cambio de I/O
-
-```sh
-wsl --cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita -- make clean
-wsl --cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita -- make test
-```
-
-Resultado verificado:
-
-```text
-All smoke tests passed on port 18080.
-```
-
-## 3. Explicación técnica del parser y del CGI
-
-### 3.1. ConfigParser
-
-Lo nuevo en esta parte es que el parser lee el archivo de configuración, valida la sintaxis básica y cambia de contexto según si está en el ámbito global, en un bloque `server` o en un bloque `location`.
-
-Qué hace bien:
-- Detecta si está dentro de un contexto global, de servidor o de location.
-- Interpreta directivas como `listen`, `server_name`, `root`, `error_page` y `client_max_body_size`.
-- Valida y normaliza la configuración antes de entregarla al resto del servidor.
-- Gestiona errores simples de configuración.
-
-```cpp
-// srcs/ConfigParser.cpp
-std::vector<ServerConfig> ConfigParser::parseFile(const std::string& filename)
-{
-    std::ifstream file(filename.c_str());
-    if (!file.is_open())
-        throw std::runtime_error("Could not open config file: " + filename);
-
-    // Cada línea se normaliza, se tokeniza y se procesa según GLOBAL,
-    // SERVER o LOCATION. La validación semántica se ejecuta al final.
-    // ...
-    ConfigValidator validator;
-    validator.validateAndNormalize(servers);
-    return servers;
 }
 ```
 
-El parser real usa `ServerConfig::host`, `ServerConfig::port` y
-`ServerConfig::root_directory`; no usa campos llamados `listen_port` o `root`.
-También comprueba los puntos y coma, directivas duplicadas, rangos de puertos,
-raíces, páginas de error y bloques sin cerrar.
-
-### 3.2. CGIHandler
-
-Este archivo ejecuta scripts CGI. Su función es crear un entorno correcto para
-que el script pueda funcionar, capturar su salida y convertirla en una respuesta
-HTTP.
-
-Qué hay que mirar:
-- La creación del proceso hijo.
-- La preparación de variables de entorno.
-- La entrada y salida del script.
-- El manejo de errores y respuestas.
-
-El método real es `CGIHandler::execute(...)`. Construye un mapa de variables
-CGI (`REQUEST_METHOD`, `QUERY_STRING`, `CONTENT_LENGTH`, `CONTENT_TYPE`, entre
-otras), lo convierte en un `envp` para `execve`, y no usa `setenv`.
-
-Versión mejorada: añade comunicación y control.
+Después se comprueba:
 
 ```cpp
-int inputPipe[2] = {-1, -1};
-int outputPipe[2] = {-1, -1};
-
-if (pipe(inputPipe) < 0)
-    return false;
-if (pipe(outputPipe) < 0)
+if (!_isMethodAllowed(location, request.getMethod()))
 {
-    _closePipe(inputPipe);
-    return false;
+    _sendErrorResponse(clientFd, 405, server, location);
+    return;
 }
 ```
 
-Después crea el proceso con `fork`, conecta las tuberías mediante `dup2`, hace
-`chdir` al directorio del script y ejecuta el intérprete configurado con
-`execve`. El padre conserva el extremo de escritura de entrada y el de lectura
-de salida para gestionarlos de forma asíncrona con `epoll`.
-
-Versión mejorada: configura los descriptores de fichero.
-
-```cpp
-if (!_setNonBlocking(inputPipe[1]) || !_setNonBlocking(outputPipe[0]))
-{
-    _closePipe(inputPipe);
-    _closePipe(outputPipe);
-    return false;
-}
-```
-
-Se utiliza `fcntl` con `F_GETFL` y `F_SETFL` para conservar las flags existentes
-del descriptor y añadir `O_NONBLOCK`. El servidor también configura
-`FD_CLOEXEC` donde corresponde para evitar herencias accidentales de
-descriptores.
-
-Nota sobre `O_NONBLOCK` y macOS:
-`O_NONBLOCK` se usa junto con `fcntl(..., F_SETFL, O_NONBLOCK)` para poner un descriptor en modo no bloqueante. Sin eso, operaciones como `read`, `write`, `accept` o `recv` podrían quedarse esperando indefinidamente y bloquear el servidor. En macOS esta es la forma estándar y portable de habilitar I/O no bloqueante, por eso se incluye en el código.
-
-## 4. Casos que necesito que compruebes
-
-La prueba debe ejecutarse contra la configuración real del repositorio. En
-`config/webserv.conf` el listener actual es `127.0.0.1:8081`, la ruta CGI es
-`/cgi-bin` y la ruta de subida es `/uploads`.
-
-### 4.1. Arranque y configuración
-
-1. Compilar con `make` usando C++98 y `-Werror`.
-2. Arrancar con la configuración válida y confirmar que anuncia `Listening`.
-3. Arrancar con un host inválido y comprobar que termina con un mensaje propio,
-    sin mostrar `strerror(errno)`.
-4. Arrancar con un puerto ocupado y comprobar que libera los recursos ya
-    abiertos y termina limpiamente.
-5. Probar configuraciones con directivas duplicadas, puerto `0`, puerto `65536`,
-    host vacío, raíz inexistente y página de error ilegible.
-6. Confirmar que solo se usan las funciones externas permitidas por el subject.
-
-### 4.2. HTTP fragmentado y límites
-
-1. Enviar la línea de petición, cabeceras y cuerpo en escrituras de un byte.
-2. Enviar varias peticiones consecutivas por la misma conexión y comprobar el
-    cierre o persistencia según el comportamiento implementado.
-3. Enviar cabeceras con nombres en mayúsculas, minúsculas y combinadas.
-4. Probar `Content-Length` correcto, ausente, duplicado, no numérico y con
-    overflow.
-5. Probar `Transfer-Encoding: chunked` dividido entre varios `recv`, incluyendo
-    chunks vacíos, extensiones, tamaño hexadecimal inválido y terminador ausente.
-6. Probar un `Transfer-Encoding` distinto de `chunked` y verificar `501`.
-7. Superar `client_max_body_size` mediante `Content-Length` y mediante chunked;
-    ambos casos deben devolver `413` sin guardar datos parciales.
-8. Enviar una petición incompleta, dejarla abierta y confirmar que el servidor
-    sigue atendiendo a otros clientes.
-
-### 4.3. Routing, métodos y archivos
-
-1. `GET /` y `GET /index.html` deben devolver `200` y el contenido correcto.
-2. Una ruta inexistente debe devolver `404` usando la página personalizada.
-3. `POST` en `/` y `GET` en `/uploads` deben respetar los métodos configurados.
-4. Probar `DELETE` sobre un archivo existente, inexistente, vacío y sin permisos.
-5. Intentar traversal con `../`, codificación porcentual y variantes repetidas;
-    nunca debe salirse de la raíz configurada.
-6. Descargar archivos binarios y comparar bytes con `cmp` o un hash SHA-256.
-7. Probar nombres con espacios, caracteres especiales, nombre vacío y colisiones
-    en subidas multipart.
-8. Verificar `autoindex` en `/uploads` y que no se habilita accidentalmente en `/`.
-
-### 4.4. CGI bajo presión
-
-1. Ejecutar `www/cgi-bin/echo.py` con GET, query string, POST vacío y POST de
-    más de 1 MiB; comprobar método, argumentos, cuerpo y código HTTP.
-2. Ejecutar un CGI inexistente, no ejecutable, con intérprete inválido y que
-    termina con error; deben producir respuestas controladas, normalmente `404`
-    o `500` según el caso.
-3. Ejecutar un CGI que tarde más de 10 segundos y comprobar `504`, terminación
-    del proceso y ausencia de zombies.
-4. Hacer diez CGI simultáneos mientras se solicitan páginas estáticas; las
-    respuestas estáticas no deben quedar bloqueadas.
-5. Hacer que el CGI produzca más de `CGI_MAX_OUTPUT_SIZE` y comprobar que el
-    proceso se termina y la respuesta no desborda memoria.
-6. Verificar que las tuberías de entrada y salida se cierran en éxito, error,
-    timeout y desconexión del cliente.
-
-### 4.5. Concurrencia, I/O y fugas
-
-1. Ejecutar 50 conexiones concurrentes a `/` y comprobar que todas reciben
-    `200`.
-2. Mantener un cliente lento enviando una petición byte a byte mientras otros
-    clientes reciben respuestas normales.
-3. Forzar escrituras parciales y `EAGAIN` con respuestas grandes; el servidor
-    debe continuar desde el offset correcto sin duplicar bytes.
-4. Interrumpir clientes durante lectura, escritura, upload y CGI; no deben
-    quedar descriptores abiertos ni procesos hijos.
-5. Comparar `/proc/<pid>/fd` antes y después de cientos de peticiones para
-    detectar fugas de descriptores.
-6. Repetir el smoke test varias veces y verificar que no quedan archivos de
-    prueba ni procesos `webserv` o CGI.
-
-### 4.6. Comandos base
-
-```sh
-make
-./webserv config/webserv.conf
-
-curl -i http://127.0.0.1:8081/
-curl -i http://127.0.0.1:8081/index.html
-curl -i http://127.0.0.1:8081/missing
-curl -i "http://127.0.0.1:8081/cgi-bin/echo.py?name=test&value=123"
-curl -i -X POST -d "name=test" http://127.0.0.1:8081/cgi-bin/echo.py
-curl -i -X POST --data-binary @archivo.bin \
-     http://127.0.0.1:8081/uploads/archivo.bin
-curl -i -X DELETE http://127.0.0.1:8081/uploads/archivo.bin
-
-make test
-```
-
-### 4.7. Guía de prueba manual CGI
-
-Ejecutar los pasos desde WSL, en dos terminales, empezando por la raíz del
-repositorio:
-
-```sh
-cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita
-```
-
-#### Paso 1: compilar y arrancar
-
-En la primera terminal:
-
-```sh
-make clean && make
-./webserv config/webserv.conf
-```
-
-Debe aparecer `Listening on 127.0.0.1:8081`. Mantener esta terminal abierta.
-
-#### Paso 2: comprobar HTTP y CGI
-
-En la segunda terminal:
-
-```sh
-curl -i http://127.0.0.1:8081/
-curl -i "http://127.0.0.1:8081/cgi-bin/echo.py?name=test"
-curl -i -X POST -d "name=test" \
-    http://127.0.0.1:8081/cgi-bin/echo.py
-time curl -i http://127.0.0.1:8081/
-```
-
-Las respuestas deben terminar con un código HTTP válido; la petición estática
-debe seguir respondiendo mientras se ejecuta el CGI.
-
-#### Paso 3: preparar un CGI lento
-
-Crear un script temporal para comprobar el timeout y los procesos activos:
-
-```sh
-printf '%s\n' \
-    '#!/usr/bin/env python3' \
-    'import time' \
-    'time.sleep(30)' \
-    'print("Content-Type: text/plain")' \
-    'print()' \
-    'print("late response")' > www/cgi-bin/hold.py
-chmod +x www/cgi-bin/hold.py
-```
-
-Lanzarlo y observarlo desde la segunda terminal:
-
-```sh
-curl -i http://127.0.0.1:8081/cgi-bin/hold.py &
-ps -ef | grep '[h]old.py'
-```
-
-Debe terminar aproximadamente a los 10 segundos con `504`. Después no debe
-quedar ningún proceso `hold.py`:
-
-```sh
-ps -ef | grep '[h]old.py' || true
-```
-
-#### Paso 4: comprobar el límite de 16 CGI activos
-
-Lanzar 16 CGI lentos en paralelo y esperar un segundo:
-
-```sh
-for i in $(seq 1 16); do
-    curl -sS -o "/tmp/cgi-$i.out" \
-        -w "cgi-$i %{http_code}\n" \
-        http://127.0.0.1:8081/cgi-bin/hold.py &
-done
-sleep 1
-```
-
-Una nueva petición debe devolver `503`, porque el límite cuenta procesos CGI,
-no pipes:
-
-```sh
-curl -sS -o /dev/null -w '%{http_code}\n' \
-    http://127.0.0.1:8081/cgi-bin/hold.py
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8081/
-```
-
-El primer código esperado es `503` y el segundo `200`. Esto confirma que el
-límite CGI no bloquea las peticiones estáticas.
-
-#### Paso 5: probar la progresión y el backpressure
-
-Repetir la carga con `2`, `5`, `10`, `20`, `32` y `64` CGI. Registrar latencia,
-códigos HTTP, timeouts y procesos activos:
-
-```sh
-for total in 2 5 10 20 32 64; do
-    echo "=== $total CGI ==="
-    start=$(date +%s%N)
-    pids=""
-    for i in $(seq 1 "$total"); do
-        curl -sS -o "/tmp/cgi-$total-$i.out" \
-            -w "%{http_code}\n" \
-            http://127.0.0.1:8081/cgi-bin/hold.py &
-        pids="$pids $!"
-    done
-    for pid in $pids; do wait "$pid"; done
-    end=$(date +%s%N)
-    echo "elapsed_ms=$(( (end - start) / 1000000 ))"
-done
-```
-
-Por encima de 16 deben aparecer rechazos `503`. Para observar backpressure de
-entrada y salida, enviar un body grande a varios CGI:
-
-```sh
-dd if=/dev/zero of=/tmp/cgi-body.bin bs=1M count=1
-for i in $(seq 1 10); do
-    curl -sS -o "/tmp/echo-$i.out" -X POST \
-        --data-binary @/tmp/cgi-body.bin \
-        http://127.0.0.1:8081/cgi-bin/echo.py &
-done
-wait
-```
-
-Si las peticiones estáticas siguen devolviendo `200` y los CGI avanzan, el
-backpressure está controlado. Si se bloquean antes de 16 procesos, revisar la
-arquitectura del bucle de eventos.
-
-#### Paso 6: limpiar y comprobar zombies
-
-Detener el servidor con `Ctrl+C` y eliminar el CGI temporal y sus salidas:
-
-```sh
-rm -f www/cgi-bin/hold.py /tmp/cgi-*.out /tmp/cgi-body.bin /tmp/echo-*.out
-ps -ef | grep '[w]ebserv\|[h]old.py' || true
-```
-
-No debe quedar ningún proceso hijo CGI ni un `webserv` antiguo.
-
-## 5. Resumen rápido
-
-Si revisas estos puntos, tendremos una buena cobertura: arranque, virtual hosts, CGI, uploads, errores HTTP y solidez frente a casos límite.
-
-## 6. Cosas por hacer
-
-- Modelo actual de límite y rechazo:
-    - `CGI_MAX_PROCESSES` vale `16`.
-    - Con `0..15` CGI activos, una nueva petición puede crear el proceso.
-    - Con `16` CGI activos, la nueva petición recibe inmediatamente `503
-        Service Unavailable`.
-    - Cuando `_tryFinalizeCgi()` llama a `_eraseCgiState(childPid)`, se libera
-        el slot y una petición nueva puede iniciar otro CGI.
-    - No existe una cola de peticiones pendientes: una petición rechazada no se
-        guarda ni se reintenta automáticamente.
-
-- La progresión `2 -> 5 -> 10 -> 20 -> 32 -> 64` es una prueba de carga, no
-    un mecanismo de queueing:
-    - Con `2`, `5` y `10`, todos los CGI deberían poder arrancar.
-    - Con `20`, aproximadamente 16 arrancan y el resto recibe `503`.
-    - Con `32` y `64`, se observa con más claridad el límite y el backpressure.
-    - Cuando terminan procesos, entran peticiones nuevas; las que ya recibieron
-        `503` no se recuperan.
-
-- Resumen del comportamiento:
+Ejemplos:
 
 ```text
-máximo 16 CGI activos
-resto -> 503 inmediato
-sin queueing
+GET  /uploads/file.txt -> permitido
+POST /uploads/file.txt -> permitido
+DELETE /uploads/file.txt -> 405
 ```
 
-- Añadir una prueba específica que abra más de 16 procesos CGI y compruebe la
-    respuesta `503` del límite.
-- Ejecutar una prueba de carga progresiva con `2 -> 5 -> 10 -> 20 -> 32 -> 64`
-    CGI simultáneos. En cada escalón registrar latencia, throughput, errores,
-    timeouts, procesos activos y pipes registrados para identificar el primer
-    punto de degradación y distinguir saturación arquitectónica de backpressure.
-- Ejecutar la prueba de fugas con Valgrind en un entorno Linux que lo tenga
-    instalado.
-- Revisar manualmente variantes adicionales de configuración y permisos.
+La configuración:
+
+```conf
+allowed_methods GET POST;
+```
+
+significa:
+
+```text
+GET  -> download
+POST -> upload
+DELETE -> bloqueado
+```
+
+El método se comprueba antes de ejecutar la lógica de `GET`, `POST`, `DELETE` o CGI.
+
+---
+
+# 6. Protección contra path traversal
+
+Después del método se revisa:
+
+```cpp
+_hasPathTraversal(request.getPath())
+```
+
+Esto bloquea rutas como:
+
+```text
+/uploads/../../etc/passwd
+```
+
+También detecta formas codificadas como:
+
+```text
+/uploads/%2e%2e/%2e%2e/etc/passwd
+```
+
+Si encuentra un segmento:
+
+```text
+..
+```
+
+devuelve:
+
+```text
+403 Forbidden
+```
+
+---
+
+# 7. Protección contra symlinks
+
+En `_handleDelete()` se construye la ruta real:
+
+```cpp
+const std::string fullPath =
+    _resolvePath(server, location, request.getPath());
+```
+
+Después se intenta abrir con:
+
+```cpp
+const int fileFd =
+    open(fullPath.c_str(), O_RDONLY | O_NOFOLLOW);
+```
+
+`O_NOFOLLOW` le dice al sistema:
+
+```text
+no sigas un enlace simbólico al abrir esta ruta
+```
+
+Si la ruta es un symlink, `open()` falla con `ELOOP`:
+
+```cpp
+if (fileFd < 0)
+    return _buildErrorResponse(
+        errno == ELOOP ? 403 : 404,
+        &server,
+        location);
+```
+
+Resultado:
+
+```text
+symlink -> 403 Forbidden
+archivo inexistente -> 404 Not Found
+```
+
+Después se cierra el descriptor:
+
+```cpp
+close(fileFd);
+```
+
+Y se usa `stat()` para comprobar que es un archivo normal:
+
+```cpp
+if (!S_ISREG(fileStat.st_mode))
+    return _buildErrorResponse(403, &server, location);
+```
+
+Finalmente se elimina:
+
+```cpp
+std::remove(fullPath.c_str());
+```
+
+## Observación importante
+
+La protección actual evita que `open()` siga un symlink. Sin embargo, entre el `open()` y el `std::remove()` existe una pequeña ventana de tiempo. Es una limitación del diseño actual porque la lista de funciones permitidas no incluye APIs más específicas como `unlinkat()`.
+
+Para el requisito del proyecto, la comprobación con `O_NOFOLLOW` es la opción compatible con las funciones permitidas.
+
+---
+
+# 8. Comprobación y ejecución progresiva de CGI
+
+El CGI no se ejecuta directamente al recibir cualquier petición.
+
+Primero se ejecutan las validaciones normales:
+
+```text
+1. Request completa
+2. Virtual host seleccionado
+3. Location encontrada
+4. Body size válido
+5. Método permitido
+6. Path traversal descartado
+```
+
+Después se resuelve la ruta:
+
+```cpp
+const std::string fullPath =
+    _resolvePath(*server, location, request.getPath());
+```
+
+Ejemplo:
+
+```text
+URL:
+    /cgi-bin/echo.py
+
+root:
+    ./www/cgi-bin
+
+ruta:
+    ./www/cgi-bin/echo.py
+```
+
+El servidor comprueba:
+
+```cpp
+stat(fullPath.c_str(), &fileStat)
+```
+
+y confirma que sea un archivo regular:
+
+```cpp
+S_ISREG(fileStat.st_mode)
+```
+
+Después busca un intérprete configurado:
+
+```cpp
+_findCgiInterpreter(location, fullPath, interpreter)
+```
+
+Por ejemplo:
+
+```conf
+cgi_extension .py /usr/bin/python3;
+```
+
+significa:
+
+```text
+archivo .py -> ejecutar con /usr/bin/python3
+```
+
+Si no hay intérprete configurado, no se trata como CGI.
+
+## Límite de procesos CGI
+
+Antes de crear otro proceso:
+
+```cpp
+if (_cgiByPid.size() >= CGI_MAX_PROCESSES)
+{
+    _sendErrorResponse(clientFd, 503, server, location);
+    return;
+}
+```
+
+Tu límite es:
+
+```cpp
+CGI_MAX_PROCESSES = 16;
+```
+
+Si ya hay 16 CGI ejecutándose:
+
+```text
+503 Service Unavailable
+```
+
+## Inicio del CGI
+
+Después `_startCgi()` comprueba de nuevo:
+
+```cpp
+_findCgiInterpreter(...)
+access(fullPath.c_str(), R_OK)
+```
+
+Luego `CGIHandler::execute()` crea el proceso y los pipes.
+
+El servidor guarda:
+
+```text
+PID del CGI
+stdin del CGI
+stdout del CGI
+cliente asociado
+body que debe enviar
+hora de inicio
+```
+
+El body del `POST` se envía progresivamente por el pipe de entrada.
+
+La salida se lee progresivamente por el pipe de salida.
+
+El servidor no espera bloqueado haciendo una lectura infinita. `epoll` le avisa cuándo puede leer o escribir.
+
+## Finalización del CGI
+
+El servidor revisa periódicamente:
+
+```cpp
+_reapCgiProcesses();
+```
+
+usando:
+
+```cpp
+waitpid(pid, &status, WNOHANG);
+```
+
+`WNOHANG` significa:
+
+```text
+comprueba si terminó, pero no bloquees el servidor
+```
+
+Cuando el CGI:
+
+1. Terminó.
+2. Cerró su salida.
+3. No excedió el tamaño máximo.
+
+se crea la respuesta HTTP:
+
+```cpp
+_queueResponse(clientFd, _buildCgiHttpResponse(output));
+```
+
+Casos de error:
+
+```text
+CGI termina con error        -> 500
+CGI tarda demasiado          -> 504
+CGI genera demasiada salida  -> 502
+más de 16 CGI activos        -> 503
+```
+
+El timeout de CGI es:
+
+```cpp
+CGI_TIMEOUT_SECONDS = 120;
+```
+
+---
+
+# 9. Flujo de virtual hosts
+
+Supón esta configuración:
+
+```conf
+server {
+    listen 127.0.0.1:8081;
+    server_name alpha.localhost;
+    root ./www;
+}
+
+server {
+    listen 127.0.0.1:8081;
+    server_name beta.localhost;
+    root ./YoupiBanane;
+}
+```
+
+Ambos usan:
+
+```text
+IP:     127.0.0.1
+puerto: 8081
+```
+
+pero tienen distinto:
+
+```text
+server_name
+root
+```
+
+## Paso 1: conexión TCP
+
+El cliente se conecta a:
+
+```text
+127.0.0.1:8081
+```
+
+El sistema operativo no sabe todavía si quiere `alpha` o `beta`. Solo sabe que llegó al socket del puerto `8081`.
+
+## Paso 2: el servidor acepta
+
+`accept()` crea la conexión del cliente.
+
+Tu `ClientState` guarda:
+
+```cpp
+listenPort = 8081;
+listenHost = 127.0.0.1;
+```
+
+## Paso 3: llega el header Host
+
+El cliente envía:
+
+```http
+Host: alpha.localhost
+```
+
+o:
+
+```http
+Host: beta.localhost
+```
+
+## Paso 4: selección
+
+`_selectServerConfig()`:
+
+1. Lee `Host`.
+2. Elimina el puerto si viene así:
+
+```http
+Host: alpha.localhost:8081
+```
+
+3. Convierte a minúsculas.
+4. Busca configuraciones con el mismo listener.
+5. Compara `server_name`.
+
+Resultado:
+
+```text
+Host: alpha.localhost -> server alpha
+Host: beta.localhost  -> server beta
+```
+
+Si no hay coincidencia, usa el primer `server` que encontró para esa IP y puerto.
+
+---
+
+# 10. Varios `server` con la misma IP y mismo puerto
+
+Ejemplo:
+
+```conf
+server {
+    listen 127.0.0.1:8081;
+    server_name alpha.localhost;
+}
+
+server {
+    listen 127.0.0.1:8081;
+    server_name beta.localhost;
+}
+```
+
+Resultado:
+
+```text
+un solo socket TCP
+varias configuraciones internas
+selección mediante Host
+```
+
+Tu código evita abrir el mismo listener dos veces:
+
+```cpp
+if (it->second.host == _servers[i].host &&
+    it->second.port == _servers[i].port)
+{
+    alreadyOpen = true;
+}
+```
+
+Esto es el caso típico de virtual hosting basado en nombre.
+
+---
+
+# 11. Varios `server` con distinta IP
+
+Ejemplo:
+
+```conf
+server {
+    listen 127.0.0.1:8081;
+    server_name local.localhost;
+}
+
+server {
+    listen 127.0.0.2:8081;
+    server_name other.localhost;
+}
+```
+
+Aquí sí se abren dos listeners porque cambia la combinación:
+
+```text
+127.0.0.1:8081
+127.0.0.2:8081
+```
+
+El flujo sería:
+
+```text
+conexión a 127.0.0.1:8081
+    -> listener de 127.0.0.1
+    -> solo servidores asociados a esa IP
+
+conexión a 127.0.0.2:8081
+    -> listener de 127.0.0.2
+    -> solo servidores asociados a esa IP
+```
+
+Aunque el `Host` diga otro nombre, `_selectServerConfig()` primero exige que coincidan:
+
+```cpp
+_servers[i].port == listenPort
+_servers[i].host == listenHost
+```
+
+Por eso un virtual host de `127.0.0.2` no se selecciona desde una conexión que entró por `127.0.0.1`.
+
+---
+
+# 12. Distinta IP y mismo archivo de configuración
+
+Puedes ejecutar:
+
+```bash
+./webserv config/multi-ip.conf
+```
+
+y tener en ese archivo:
+
+```conf
+server {
+    listen 127.0.0.1:8081;
+    server_name site-one.localhost;
+}
+
+server {
+    listen 127.0.0.2:8081;
+    server_name site-two.localhost;
+}
+```
+
+El mismo proceso lee un solo archivo, crea dos `ServerConfig` y abre dos listeners:
+
+```text
+fd 4 -> 127.0.0.1:8081
+fd 5 -> 127.0.0.2:8081
+```
+
+Ambos descriptores se registran en el mismo `epoll`.
+
+Por eso el bucle puede recibir:
+
+```text
+evento en fd 4 -> aceptar cliente de 127.0.0.1
+evento en fd 5 -> aceptar cliente de 127.0.0.2
+```
+
+---
+
+# 13. Misma IP y distinto archivo de configuración
+
+Puedes ejecutar dos procesos:
+
+```bash
+./webserv config/site-a.conf
+./webserv config/site-b.conf
+```
+
+Pero no pueden escuchar los dos en la misma combinación:
+
+```text
+127.0.0.1:8081
+```
+
+El segundo proceso fallará con:
+
+```text
+Address already in use
+```
+
+Cada proceso tiene su propio:
+
+```text
+epoll
+listeners
+clientes
+configuración
+```
+
+No comparten automáticamente los virtual hosts.
+
+Para que funcionen los dos procesos debes usar puertos distintos:
+
+```bash
+./webserv config/site-a.conf
+./webserv config/site-b.conf PORT+1
+```
+
+Si ambos archivos tienen:
+
+```conf
+listen 127.0.0.1:8081;
+```
+
+el segundo, usando `PORT+1`, se iniciará en:
+
+```text
+127.0.0.1:8082
+```
+
+---
+
+# 14. Resumen de combinaciones
+
+| Configuración | Resultado |
+|---|---|
+| Misma IP, mismo puerto, distintos `server_name` | Un listener, selección por `Host` |
+| Distinta IP, mismo puerto | Un listener por IP |
+| Misma IP, distinto puerto | Un listener por puerto |
+| Mismo archivo, varias IP/puertos | Un proceso con varios listeners dentro del mismo `epoll` |
+| Distintos archivos, misma IP y puerto | Conflicto: `Address already in use` |
+| Distintos archivos, misma IP y distinto puerto | Dos procesos independientes |
+| Mismo `server_name` repetido en la misma IP y puerto | Se selecciona la primera coincidencia |
+| `Host` desconocido | Se usa el primer server de ese listener |
+
+La idea central de tu arquitectura es:
+
+```text
+epoll decide qué descriptor necesita atención.
+
+El listener acepta conexiones.
+
+El cliente recibe y envía HTTP.
+
+El pipe transporta datos de CGI.
+
+El Host selecciona el virtual host.
+
+El virtual host decide root, límites, locations y errores.
+```
