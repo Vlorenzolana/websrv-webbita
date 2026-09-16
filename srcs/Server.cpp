@@ -841,7 +841,7 @@ void Server::_eraseCgiState(pid_t childPid)
     _cgiByPid.erase(childPid);
 }
 
-const ServerConfig* Server::_selectServerConfig(int listenPort,
+const ServerConfig *Server::_selectServerConfig(int listenPort,
     const std::string& listenHost, const Request& request) const
 {
     std::string host = request.getHeaderValue("host");

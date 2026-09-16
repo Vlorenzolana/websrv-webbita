@@ -3,112 +3,209 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Webserv Evaluation Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        function copyCommand(id) {
-            const text = document.getElementById(id).innerText;
-            navigator.clipboard.writeText(text);
-            alert("¡Comando copiado al portapapeles!");
+    <title>Webserv Evaluation Tester</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e; --card-bg: #2d2d2d;
+            --text-color: #e0e0e0; --accent: #007acc;
+            --success: #4caf50; --error: #f44336; --warning: #ff9800;
         }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color); color: var(--text-color);
+            max-width: 1000px; margin: 0 auto; padding: 20px;
+        }
+        h1, h2, h3 { color: #ffffff; }
+        .config-panel { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .config-panel input { padding: 5px; margin-right: 10px; background: #444; color: white; border: 1px solid #555;}
+        .test-card {
+            background-color: var(--card-bg); border-left: 5px solid var(--accent);
+            padding: 20px; margin-bottom: 20px; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .badge {
+            padding: 4px 8px; border-radius: 4px; font-weight: bold; color: white; font-size: 0.85em; margin-right: 10px;
+        }
+        .get { background-color: var(--success); }
+        .post { background-color: var(--warning); color: black;}
+        .delete { background-color: var(--error); }
+        .unknown { background-color: #9c27b0; }
+        .cgi { background-color: #e91e63; }
+        button {
+            background-color: var(--accent); color: white; border: none; padding: 10px 15px;
+            border-radius: 4px; cursor: pointer; margin-top: 10px; font-weight: bold;
+        }
+        button:hover { background-color: #005999; }
+        pre { background-color: #111; padding: 15px; border-radius: 4px; overflow-x: auto; color: #a6e22e; }
+        .curl-cmd { background-color: #222; color: #f8f8f2; border: 1px dashed #555; }
+    </style>
+</head>
+<body>
 
-        async function testDelete() {
-            const filename = prompt("Introduce el nombre del archivo a borrar (ej. raw.bin):");
-            if (filename) {
-                const response = await fetch('/uploads/' + filename, { method: 'DELETE' });
-                alert(`Código de respuesta: ${response.status} ${response.statusText}`);
+    <h1>🚀 Webserv Evaluation Tester</h1>
+    
+    <div class="config-panel">
+        <h3>Configuración Global</h3>
+        <label>Servidor Base: <input type="text" id="baseUrl" value="http://localhost:8080"></label>
+        <p><small>Cambia esto al puerto donde tu webserv esté escuchando. Actualizará los comandos curl automáticamente.</small></p>
+    </div>
+
+    <!-- 1. GET & Errors -->
+    <h2>1. Métodos Básicos y Rutas</h2>
+    
+    <div class="test-card">
+        <h3><span class="badge get">GET</span> Listado de Directorio (Autoindex)</h3>
+        <p>Prueba si el servidor lista correctamente los archivos de un directorio.</p>
+        <button onclick="runTest('autoindex-res', '/dir_list', {method: 'GET'})">Probar Autoindex</button>
+        <pre id="autoindex-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/dir_list">curl -i -X GET "[URL]/dir_list"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge get">GET</span> URL Incorrecta (Custom 404)</h3>
+        <p>Prueba una ruta que no existe para verificar la página de error por defecto.</p>
+        <button onclick="runTest('404-res', '/ruta_que_no_existe', {method: 'GET'})">Probar 404</button>
+        <pre id="404-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/ruta_que_no_existe">curl -i -X GET "[URL]/ruta_que_no_existe"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge get">GET</span> Redirección</h3>
+        <p>Verifica si una URL configurada redirige correctamente (301 o 302).</p>
+        <button onclick="runTest('redir-res', '/old-route', {method: 'GET', redirect: 'manual'})">Probar Redirección</button>
+        <pre id="redir-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/old-route">curl -i -X GET "[URL]/old-route"</pre>
+    </div>
+
+    <!-- 2. POST & Body Limits -->
+    <h2>2. POST y Límites de Body</h2>
+
+    <div class="test-card">
+        <h3><span class="badge post">POST</span> Límite de Body (Correcto)</h3>
+        <p>Envía un payload pequeño que debería ser aceptado por el servidor.</p>
+        <button onclick="runTest('post-ok-res', '/upload', {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: 'Texto corto'})">Probar POST Válido</button>
+        <pre id="post-ok-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/upload">curl -i -X POST -H "Content-Type: text/plain" --data "Texto corto" "[URL]/upload"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge post">POST</span> Límite de Body (Excedido)</h3>
+        <p>Envía un payload grande para provocar un error 413 Payload Too Large.</p>
+        <button onclick="runTest('post-big-res', '/upload', {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: 'A'.repeat(50000)})">Probar POST Excedido</button>
+        <pre id="post-big-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/upload">curl -i -X POST -H "Content-Type: text/plain" --data "A... (texto gigante)" "[URL]/upload"</pre>
+    </div>
+
+    <!-- 3. Metodos Permitidos y DELETE -->
+    <h2>3. Permisos y Métodos Desconocidos</h2>
+
+    <div class="test-card">
+        <h3><span class="badge delete">DELETE</span> Método Permitido</h3>
+        <p>Prueba a borrar un archivo en una ruta con permisos.</p>
+        <button onclick="runTest('del-ok-res', '/delete_allowed/test.txt', {method: 'DELETE'})">Probar DELETE Permitido</button>
+        <pre id="del-ok-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/delete_allowed/test.txt">curl -i -X DELETE "[URL]/delete_allowed/test.txt"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge delete">DELETE</span> Método Denegado</h3>
+        <p>Prueba a borrar un archivo donde el método no está aceptado (Debe dar 405 Method Not Allowed).</p>
+        <button onclick="runTest('del-no-res', '/delete_denied/test.txt', {method: 'DELETE'})">Probar DELETE Denegado</button>
+        <pre id="del-no-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/delete_denied/test.txt">curl -i -X DELETE "[URL]/delete_denied/test.txt"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge unknown">UNKNOWN</span> Método Desconocido</h3>
+        <p>Prueba un método HTTP inventado para asegurar que el servidor no crashea (501 Not Implemented o 400).</p>
+        <button onclick="runTest('unk-res', '/', {method: 'PURGE'})">Probar Método Desconocido</button>
+        <pre id="unk-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/">curl -i -X PURGE "[URL]/"</pre>
+    </div>
+
+    <!-- 4. CGI -->
+    <h2>4. Common Gateway Interface (CGI)</h2>
+
+    <div class="test-card">
+        <h3><span class="badge cgi">CGI GET</span> Ejecución de Script GET</h3>
+        <p>Verifica que el CGI se ejecuta correctamente y devuelve resultados.</p>
+        <button onclick="runTest('cgi-get-res', '/cgi-bin/test.py?name=Evaluator', {method: 'GET'})">Probar CGI GET</button>
+        <pre id="cgi-get-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/cgi-bin/test.py?name=Evaluator">curl -i -X GET "[URL]/cgi-bin/test.py?name=Evaluator"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge cgi">CGI POST</span> Ejecución de Script POST</h3>
+        <p>Verifica que el CGI recibe el body correctamente por STDIN.</p>
+        <button onclick="runTest('cgi-post-res', '/cgi-bin/test.py', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'name=Evaluator&project=Webserv'})">Probar CGI POST</button>
+        <pre id="cgi-post-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/cgi-bin/test.py">curl -i -X POST -d "name=Evaluator&project=Webserv" "[URL]/cgi-bin/test.py"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge cgi">CGI ERROR</span> CGI con Fallo / Bucle</h3>
+        <p>Verifica el manejo de errores del servidor (Timeout o 500 Internal Server Error) sin crashear.</p>
+        <button onclick="runTest('cgi-err-res', '/cgi-bin/infinite.py', {method: 'GET'})">Probar CGI Error</button>
+        <pre id="cgi-err-res">Resultado...</pre>
+        <h4>Comando cURL:</h4>
+        <pre class="curl-cmd" data-path="/cgi-bin/infinite.py">curl -i -X GET "[URL]/cgi-bin/infinite.py"</pre>
+    </div>
+
+    <script>
+        // Actualiza los comandos curl cuando el usuario cambia la URL base
+        document.getElementById('baseUrl').addEventListener('input', updateCurlCommands);
+
+        function updateCurlCommands() {
+            const baseUrl = document.getElementById('baseUrl').value;
+            document.querySelectorAll('.curl-cmd').forEach(el => {
+                const path = el.getAttribute('data-path');
+                let originalText = el.innerText;
+                // Reemplazamos lo que esté entre corchetes [URL] o rutas viejas con la nueva URL
+                el.innerText = originalText.replace(/(https?:\/\/[^\/]+|\[URL\])/g, baseUrl);
+            });
+        }
+        
+        // Inicializar los comandos curl al cargar la página
+        updateCurlCommands();
+
+        async function runTest(elementId, path, options) {
+            const baseUrl = document.getElementById('baseUrl').value;
+            const url = baseUrl + path;
+            const resultBox = document.getElementById(elementId);
+            
+            resultBox.innerText = `Enviando ${options.method} a ${url}...\n`;
+
+            try {
+                const startTime = performance.now();
+                const response = await fetch(url, options);
+                const endTime = performance.now();
+                
+                let output = `STATUS: ${response.status} ${response.statusText}\n`;
+                output += `TIEMPO: ${(endTime - startTime).toFixed(2)} ms\n\n`;
+                
+                output += `--- HEADERS DE RESPUESTA ---\n`;
+                for (let [key, value] of response.headers) {
+                    output += `${key}: ${value}\n`;
+                }
+                
+                output += `\n--- CUERPO DE RESPUESTA ---\n`;
+                const text = await response.text();
+                output += text ? text : "(Respuesta vacía)";
+                
+                resultBox.innerText = output;
+            } catch (error) {
+                resultBox.innerText = `ERROR DE RED (¿CORS o Servidor caído?): \n${error.message}\n\nNota: Si tu servidor no implementa CORS, las peticiones fetch fallarán en el navegador, pero puedes usar los comandos curl.`;
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans p-8">
-
-    <div class="max-w-5xl mx-auto space-y-8">
-        <header class="border-b border-slate-700 pb-4">
-            <h1 class="text-4xl font-bold text-teal-400">Webserv Dashboard</h1>
-            <p class="text-slate-400 mt-2">Panel de control interactivo para la evaluación de 42.</p>
-        </header>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-            
-            <!-- PRUEBAS INTERACTIVAS -->
-            <section class="bg-slate-800 p-6 rounded-lg shadow-lg space-y-6">
-                <h2 class="text-2xl font-semibold text-white border-b border-slate-600 pb-2">1. Pruebas Interactivas</h2>
-                
-                <!-- CGI y Rutas -->
-                <div class="space-y-2">
-                    <h3 class="text-lg text-teal-300">Navegación y CGI</h3>
-                    <div class="flex flex-wrap gap-3">
-                        <a href="/missing-page-test" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm transition">Test Error 404</a>
-                        <a href="/uploads/" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm transition">Ver Autoindex (/uploads/)</a>
-                        <a href="/cgi-bin/echo.py?evaluacion=completada&user=Oian" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm text-white transition">CGI: GET Request</a>
-                    </div>
-                </div>
-
-                <!-- Formularios -->
-                <div class="space-y-4">
-                    <h3 class="text-lg text-teal-300">CGI: POST Request</h3>
-                    <form action="/cgi-bin/echo.py" method="POST" class="flex gap-2">
-                        <input type="text" name="mensaje" placeholder="Escribe algo..." class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:border-teal-400">
-                        <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-white transition">Enviar POST</button>
-                    </form>
-                </div>
-
-                <div class="space-y-4">
-                    <h3 class="text-lg text-teal-300">Subida de Archivos (Upload)</h3>
-                    <form action="/uploads/subida_interactiva.txt" method="POST" enctype="multipart/form-data" class="flex flex-col gap-3">
-                        <input type="file" name="file" class="text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600">
-                        <button type="submit" class="w-fit px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white transition">Subir Archivo</button>
-                    </form>
-                </div>
-
-                <div class="space-y-2">
-                    <h3 class="text-lg text-teal-300">Borrado de Archivos (DELETE)</h3>
-                    <button onclick="testDelete()" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 rounded text-white text-sm transition">Ejecutar método DELETE</button>
-                </div>
-            </section>
-
-            <!-- CHEAT SHEET TERMINAL -->
-            <section class="bg-slate-800 p-6 rounded-lg shadow-lg space-y-6">
-                <h2 class="text-2xl font-semibold text-white border-b border-slate-600 pb-2">2. Comandos de Terminal</h2>
-                <p class="text-sm text-slate-400">Haz clic en "Copiar" y pégalo en la terminal del evaluador.</p>
-
-                <!-- Comandos -->
-                <div class="space-y-4">
-                    
-                    <div class="bg-slate-900 rounded p-3 relative group">
-                        <span class="text-xs text-slate-500 block mb-1">Método Desconocido (Anti-Crash):</span>
-                        <code id="cmd1" class="text-green-400 text-sm">curl -i -X INVENTO http://127.0.0.1:8081/</code>
-                        <button onclick="copyCommand('cmd1')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
-                    </div>
-
-                    <div class="bg-slate-900 rounded p-3 relative group">
-                        <span class="text-xs text-slate-500 block mb-1">Límite de Body (Error 413):</span>
-                        <code id="cmd2" class="text-green-400 text-sm">curl -i -X POST -H "Content-Type: text/plain" --data "Texto gigante" http://127.0.0.1:8081/</code>
-                        <button onclick="copyCommand('cmd2')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
-                    </div>
-
-                    <div class="bg-slate-900 rounded p-3 relative group">
-                        <span class="text-xs text-slate-500 block mb-1">Upload Binario Puro por curl:</span>
-                        <code id="cmd3" class="text-green-400 text-sm">curl -i -X POST --data-binary @webserv http://127.0.0.1:8081/uploads/webserv_copy</code>
-                        <button onclick="copyCommand('cmd3')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
-                    </div>
-
-                    <div class="bg-slate-900 rounded p-3 relative group">
-                        <span class="text-xs text-slate-500 block mb-1">Path Traversal (Seguridad 403/404):</span>
-                        <code id="cmd4" class="text-green-400 text-sm">curl -i --path-as-is http://127.0.0.1:8081/../../../../etc/passwd</code>
-                        <button onclick="copyCommand('cmd4')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
-                    </div>
-
-                    <div class="bg-slate-900 rounded p-3 relative group">
-                        <span class="text-xs text-slate-500 block mb-1">Prueba de Estrés (Siege):</span>
-                        <code id="cmd5" class="text-green-400 text-sm">siege -b -c 100 -t 30S http://127.0.0.1:8081/</code>
-                        <button onclick="copyCommand('cmd5')" class="absolute top-3 right-3 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition">Copiar</button>
-                    </div>
-
-                </div>
-            </section>
-        </div>
-    </div>
 </body>
 </html>
