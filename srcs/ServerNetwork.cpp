@@ -1,7 +1,7 @@
 #include "../includes/Server.hpp"
 
 #include <algorithm>
-#include <arpa/inet.h>
+#include <netdb.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <sstream>
 #include <stdexcept>
@@ -39,8 +38,8 @@ void Server::_openListener(const ServerConfig& server)
     std::memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons(static_cast<unsigned short>(server.port));
-
-    struct hostent* host = gethostbyname(server.host.c_str());
+  
+  struct hostent* host = gethostbyname(server.host.c_str());
     if (host == NULL || host->h_addrtype != AF_INET ||
         host->h_addr_list == NULL || host->h_addr_list[0] == NULL)
     {
@@ -49,7 +48,6 @@ void Server::_openListener(const ServerConfig& server)
     }
     std::memcpy(&address.sin_addr, host->h_addr_list[0],
         sizeof(address.sin_addr));
-
     if (bind(listenerFd, reinterpret_cast<struct sockaddr*>(&address),
             sizeof(address)) < 0)
     {
