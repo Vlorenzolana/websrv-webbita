@@ -89,7 +89,7 @@ std::string Server::_intToString(long value)
 
 void Server::init()
 {
-    _epollFd = epoll_create1(EPOLL_CLOEXEC);
+    _epollFd = epoll_create(128);
     if (_epollFd < 0)
         throw std::runtime_error("Failed to create epoll instance: " +
             std::string(std::strerror(errno)));
@@ -146,4 +146,3 @@ void Server::run()
         _checkTimeouts();
     }
 }
-
