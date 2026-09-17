@@ -96,7 +96,7 @@ private:
 
     static const int CLIENT_TIMEOUT_SECONDS = 30;
     static const int CGI_TIMEOUT_SECONDS = 25;
-    static const std::size_t CGI_MAX_PROCESSES = 16;
+    static const std::size_t CGI_MAX_PROCESSES = 1;
     static const std::size_t CGI_MAX_OUTPUT_SIZE = 128 * 1024 * 1024;
 
     static bool _setNonBlocking(int fd);

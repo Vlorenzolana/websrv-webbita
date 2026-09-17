@@ -32,6 +32,7 @@ cleanup() {
           "$ROOT_DIR/www/uploads/chunk.bin" \
             "$ROOT_DIR/www/uploads/read-only.txt" \
             "$ROOT_DIR/www/uploads/delete-link" \
+              "$ROOT_DIR/www2/uploads/delete-link" \
           "$ROOT_DIR/www/cgi-bin/fail.py" \
           "$ROOT_DIR/www/cgi-bin/slow.py"
 }
@@ -127,7 +128,7 @@ sleep 0.3
 status="$(curl -sS -o "$TMP_DIR/index" -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
 [[ "$status" == "200" ]]
 
-grep -q "webserv is running" "$TMP_DIR/index"
+grep -q "Webserv Evaluation Tester - 42 Urduliz" "$TMP_DIR/index"
 
 status="$(curl -sS -H 'Host: alpha.localhost' -o "$TMP_DIR/alpha" \
     -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
@@ -142,7 +143,7 @@ grep -q "beta virtual host" "$TMP_DIR/beta"
 status="$(curl -sS -H 'Host: unknown.localhost' -o "$TMP_DIR/fallback" \
     -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
 [[ "$status" == "200" ]]
-grep -q "webserv is running" "$TMP_DIR/fallback"
+grep -q "Webserv Evaluation Tester - 42 Urduliz" "$TMP_DIR/fallback"
 
 head -c 2048 /dev/zero > "$TMP_DIR/too-large.bin"
 status="$(curl -sS -H 'Host: limited.localhost' -o "$TMP_DIR/too-large" \
@@ -167,7 +168,7 @@ grep -q "405" "$TMP_DIR/method-not-allowed"
 status="$(curl -sS -o "$TMP_DIR/secondary-index" -w '%{http_code}' \
     "http://127.0.0.1:${SECOND_PORT}/")"
 [[ "$status" == "200" ]]
-grep -q "webserv is running" "$TMP_DIR/secondary-index"
+grep -q "Webserv Evaluation Tester - 42 Urduliz" "$TMP_DIR/secondary-index"
 
 status="$(curl -sS -o "$TMP_DIR/missing" -w '%{http_code}' "http://127.0.0.1:${PORT}/missing")"
 [[ "$status" == "404" ]]
@@ -199,9 +200,10 @@ else
     echo "Skipping read-only DELETE check: filesystem mode is ${read_only_mode}"
 fi
 
-ln -s index.html www/uploads/delete-link
+ln -s index.html www2/uploads/delete-link
 status="$(curl -sS -o "$TMP_DIR/symlink-delete" -w '%{http_code}' \
-    -X DELETE "http://127.0.0.1:${PORT}/uploads/delete-link")"
+    -H 'Host: localhost2' -X DELETE \
+    "http://127.0.0.1:${PORT}/uploads/delete-link")"
 [[ "$status" == "403" ]]
 grep -q "403" "$TMP_DIR/symlink-delete"
 

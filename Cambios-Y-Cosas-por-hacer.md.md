@@ -1,15 +1,11 @@
 ﻿Orden real del código: conexión, lectura, selección del virtual host, validaciones, CGI o recurso estático, y finalmente respuesta mediante `epoll`. También distinguiré qué ocurre cuando cambian la IP, el puerto o el archivo de configuración.
 
 Read , lines 500 to 625
-
 Read , lines 670 to 850
-
 Read , lines 1080 to 1240
-
 Read , lines 270 to 340
 
 ## 1. Flujo general de una petición
-
 Cuando un cliente hace:
 
 ```bash
@@ -1029,4 +1025,174 @@ El pipe transporta datos de CGI.
 El Host selecciona el virtual host.
 
 El virtual host decide root, límites, locations y errores.
+```
+
+## Pruebas manuales
+Claro, una **guía manual** con tres pruebas.
+
+## 1. Probar `CGI_MAX_PROCESSES = 1`
+
+### Terminal 1: compilar y arrancar
+
+```bash
+cd /mnt/c/Users/VanessaL/Documents/practice/websrv-webbita
+make
+./webserv config/webserv.conf
+```
+
+### Terminal 2: ocupar el único proceso CGI
+
+```bash
+curl -i --max-time 35 \
+  http://127.0.0.1:8081/cgi-bin/hold.py
+```
+
+Mientras esta petición sigue abierta, comprueba el proceso:
+
+```bash
+ps -ef | grep '[h]old.py'
+```
+
+### Terminal 3: lanzar otro CGI
+
+```bash
+curl -i --max-time 5 \
+  http://127.0.0.1:8081/cgi-bin/echo.py
+```
+
+Resultado esperado:
+
+```text
+HTTP/1.1 503 Service Unavailable
+```
+
+Cuando termine el primer CGI, la misma petición debería devolver:
+
+```text
+HTTP/1.1 200 OK
+```
+
+El primer `hold.py` debería terminar con `504`, porque tarda 30 segundos pero el límite es:
+
+```cpp
+CGI_TIMEOUT_SECONDS = 25;
+```
+
+---
+
+## 2. Probar `client_max_body_size`
+
+En `webserv.conf` el virtual host `localhost2` tiene:
+
+```conf
+client_max_body_size 4M;
+```
+
+### Crear un archivo válido de 1 MB
+
+```bash
+dd if=/dev/zero of=/tmp/body-1m.bin bs=1M count=1
+```
+
+Enviar el archivo:
+
+```bash
+curl -i \
+  -H 'Host: localhost2' \
+  -X POST \
+  --data-binary @/tmp/body-1m.bin \
+  http://127.0.0.1:8081/cgi-bin/echo.py
+```
+
+Resultado esperado:
+
+```text
+HTTP/1.1 200 OK
+```
+
+### Crear un archivo demasiado grande
+
+```bash
+dd if=/dev/zero of=/tmp/body-5m.bin bs=1M count=5
+```
+
+Enviar el archivo:
+
+```bash
+curl -i \
+  -H 'Host: localhost2' \
+  -X POST \
+  --data-binary @/tmp/body-5m.bin \
+  http://127.0.0.1:8081/cgi-bin/echo.py
+```
+
+Resultado esperado:
+
+```text
+HTTP/1.1 413 Payload Too Large
+```
+
+Esto confirma que la petición se rechaza antes de ejecutar el CGI.
+
+También puedes comprobar el límite usando `Transfer-Encoding: chunked`:
+
+```bash
+curl -i \
+  -H 'Host: localhost2' \
+  -H 'Transfer-Encoding: chunked' \
+  -X POST \
+  --data-binary @/tmp/body-5m.bin \
+  http://127.0.0.1:8081/cgi-bin/echo.py
+```
+
+Debe devolver igualmente `413`.
+
+---
+
+## 3. Probar error interno de CGI
+
+Este CGI ya existe en el smoke test, pero puedes crearlo manualmente:
+
+```bash
+cat > www/cgi-bin/fail.py <<'PY'
+#!/usr/bin/env python3
+raise RuntimeError("intentional failure")
+PY
+
+chmod +x www/cgi-bin/fail.py
+```
+
+Probarlo:
+
+```bash
+curl -i \
+  http://127.0.0.1:8081/cgi-bin/fail.py
+```
+
+Resultado esperado:
+
+```text
+HTTP/1.1 500 Internal Server Error
+```
+
+Esto verifica que el servidor detecta que el proceso CGI termina con estado de error.
+
+Para limpiar:
+
+```bash
+rm -f www/cgi-bin/fail.py /tmp/body-1m.bin /tmp/body-5m.bin
+```
+
+Para detener el servidor:
+
+```text
+Ctrl+C
+```
+
+Las tres pruebas cubren:
+
+```text
+CGI_MAX_PROCESSES  -> 503
+client_max_body_size -> 413
+CGI con error interno -> 500
 ```

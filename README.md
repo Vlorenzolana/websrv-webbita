@@ -1,4 +1,4 @@
-*This project has been created as part of the 42 curriculum by <vlorenzo> and <oiahidal>.*
+*This project has been created as part of the 42 curriculum by vlorenzo and oiahidal.*
 
 # webserv
 
@@ -130,7 +130,7 @@ The optional third argument is handled there. A numeric value overrides every co
 
 ### epoll and file descriptors
 
-The main implementation is in `srcs/Server.cpp`, with state declarations in `includes/Server.hpp`. Linux represents sockets and pipes with integer file descriptors. The server stores their state in maps such as:
+The server implementation is split across `srcs/Server.cpp`, `srcs/ServerNetwork.cpp`, `srcs/ServerCgi.cpp`, `srcs/ServerRequest.cpp`, and `srcs/ServerResources.cpp`, with state declarations in `includes/Server.hpp`. Linux represents sockets and pipes with integer file descriptors. The server stores their state in maps such as:
 
 ```cpp
 std::map<int, ListenerState> _listeners;
@@ -166,7 +166,7 @@ Listeners use `EPOLLIN` to mean that a connection is waiting. Clients use `EPOLL
 
 ### Request processing order
 
-`Server::_processRequest()` in `srcs/Server.cpp` follows this order:
+`Server::_processRequest()` in `srcs/ServerRequest.cpp` follows this order:
 
 1. Select the server configuration using the listening socket and `Host`.
 2. Match the request path to a `location`.
@@ -180,7 +180,7 @@ The body limit is first updated after the request headers are available in `Serv
 
 ### CGI execution
 
-CGI setup is implemented in `srcs/CGIHandler.cpp`; orchestration is in `srcs/Server.cpp`. The server progressively:
+CGI setup is implemented in `srcs/CGIHandler.cpp`; orchestration is in `srcs/ServerCgi.cpp`. The server progressively:
 
 1. Resolves the requested path and confirms it is a regular file with `stat`.
 2. Finds the configured interpreter for the file extension.
@@ -288,7 +288,11 @@ The implementation was compiled and behavior was checked with the project build 
 - `config/webserv.conf`: main server configuration.
 - `config/vhosts.conf`: virtual-host demonstration configuration.
 - `srcs/main.cpp`: argument handling and server startup.
-- `srcs/Server.cpp`: sockets, epoll, HTTP dispatch, uploads, deletion, and CGI lifecycle.
+- `srcs/Server.cpp`: server lifecycle and the main epoll loop.
+- `srcs/ServerNetwork.cpp`: listeners, client sockets, epoll events, and response I/O.
+- `srcs/ServerCgi.cpp`: CGI process lifecycle, pipes, output limits, and timeouts.
+- `srcs/ServerRequest.cpp`: virtual-host selection, routing, validation, and request dispatch.
+- `srcs/ServerResources.cpp`: static resources, uploads, deletion, MIME types, and HTTP responses.
 - `srcs/Request.cpp`: incremental HTTP request parser.
 - `srcs/CGIHandler.cpp`: CGI environment and process launch.
 - `srcs/ConfigParser.cpp`: configuration parser.

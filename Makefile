@@ -7,7 +7,11 @@ SRCS := srcs/main.cpp \
         srcs/ConfigValidator.cpp \
         srcs/Request.cpp \
         srcs/CGIHandler.cpp \
-        srcs/Server.cpp
+		srcs/Server.cpp \
+		srcs/ServerNetwork.cpp \
+		srcs/ServerCgi.cpp \
+		srcs/ServerRequest.cpp \
+		srcs/ServerResources.cpp
 
 OBJS := $(SRCS:.cpp=.o)
 
