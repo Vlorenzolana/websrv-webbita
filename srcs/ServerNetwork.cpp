@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sstream>
 #include <stdexcept>
@@ -38,11 +39,16 @@ void Server::_openListener(const ServerConfig& server)
     std::memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons(static_cast<unsigned short>(server.port));
-    if (inet_pton(AF_INET, server.host.c_str(), &address.sin_addr) != 1)
+
+    struct hostent* host = gethostbyname(server.host.c_str());
+    if (host == NULL || host->h_addrtype != AF_INET ||
+        host->h_addr_list == NULL || host->h_addr_list[0] == NULL)
     {
         close(listenerFd);
         throw std::runtime_error("Invalid listen host: " + server.host);
     }
+    std::memcpy(&address.sin_addr, host->h_addr_list[0],
+        sizeof(address.sin_addr));
 
     if (bind(listenerFd, reinterpret_cast<struct sockaddr*>(&address),
             sizeof(address)) < 0)
