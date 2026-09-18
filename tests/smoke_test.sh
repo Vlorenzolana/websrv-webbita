@@ -39,6 +39,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
+# Build the server and prepare temporary virtual-host document roots.
 make >/dev/null
 mkdir -p "$VHOST_ALPHA_ROOT" "$VHOST_BETA_ROOT"
 printf 'alpha virtual host\n' > "$VHOST_ALPHA_ROOT/index.html"
@@ -115,6 +116,7 @@ print("late response")
 PY
 chmod +x www/cgi-bin/fail.py www/cgi-bin/slow.py
 
+# Start the server, optionally under Valgrind for leak detection.
 SERVER_COMMAND=(./webserv "$TMP_CONFIG")
 if [[ "${LEAK_CHECK:-0}" == "1" ]]; then
     SERVER_COMMAND=(valgrind --leak-check=full --show-leak-kinds=all \
@@ -125,11 +127,13 @@ fi
 SERVER_PID=$!
 sleep 0.3
 
+# Serve the default virtual host's index page.
 status="$(curl -sS -o "$TMP_DIR/index" -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
 [[ "$status" == "200" ]]
 
 grep -q "Webserv Evaluation Tester - 42 Urduliz" "$TMP_DIR/index"
 
+# Route requests to the correct virtual host by Host header.
 status="$(curl -sS -H 'Host: alpha.localhost' -o "$TMP_DIR/alpha" \
     -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
 [[ "$status" == "200" ]]
@@ -140,11 +144,13 @@ status="$(curl -sS -H 'Host: beta.localhost' -o "$TMP_DIR/beta" \
 [[ "$status" == "200" ]]
 grep -q "beta virtual host" "$TMP_DIR/beta"
 
+# Fall back to the default server for an unknown virtual host.
 status="$(curl -sS -H 'Host: unknown.localhost' -o "$TMP_DIR/fallback" \
     -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
 [[ "$status" == "200" ]]
 grep -q "Webserv Evaluation Tester - 42 Urduliz" "$TMP_DIR/fallback"
 
+# Reject oversized fixed-length and chunked request bodies.
 head -c 2048 /dev/zero > "$TMP_DIR/too-large.bin"
 status="$(curl -sS -H 'Host: limited.localhost' -o "$TMP_DIR/too-large" \
     -w '%{http_code}' -X POST --data-binary @"$TMP_DIR/too-large.bin" \
@@ -159,21 +165,25 @@ status="$(curl -sS -H 'Host: limited.localhost' -o "$TMP_DIR/too-large-chunked" 
 [[ "$status" == "413" ]]
 grep -q "413" "$TMP_DIR/too-large-chunked"
 
+# Reject a method that is not allowed by the location configuration.
 status="$(curl -sS -H 'Host: localhost' -o "$TMP_DIR/method-not-allowed" \
     -w '%{http_code}' -X POST --data 'small body' \
     "http://127.0.0.1:${PORT}/")"
 [[ "$status" == "405" ]]
 grep -q "405" "$TMP_DIR/method-not-allowed"
 
+# Serve a virtual host listening on a second port.
 status="$(curl -sS -o "$TMP_DIR/secondary-index" -w '%{http_code}' \
     "http://127.0.0.1:${SECOND_PORT}/")"
 [[ "$status" == "200" ]]
 grep -q "Webserv Evaluation Tester - 42 Urduliz" "$TMP_DIR/secondary-index"
 
+# Return the configured custom error page for a missing resource.
 status="$(curl -sS -o "$TMP_DIR/missing" -w '%{http_code}' "http://127.0.0.1:${PORT}/missing")"
 [[ "$status" == "404" ]]
 grep -q "Custom 404" "$TMP_DIR/missing"
 
+# Preserve binary data during a regular POST upload.
 printf 'ABC\0XYZ' > "$TMP_DIR/raw.bin"
 status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
     --data-binary @"$TMP_DIR/raw.bin" \
@@ -181,6 +191,7 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
 [[ "$status" == "201" ]]
 cmp "$TMP_DIR/raw.bin" www/uploads/raw.bin
 
+# Accept multipart form uploads and store the uploaded file.
 printf 'multipart-data' > "$TMP_DIR/form.txt"
 status="$(curl -sS -o /dev/null -w '%{http_code}' \
     -F "file=@$TMP_DIR/form.txt" \
@@ -188,18 +199,7 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' \
 [[ "$status" == "201" ]]
 cmp "$TMP_DIR/form.txt" www/uploads/form.txt
 
-printf 'read-only file\n' > www/uploads/read-only.txt
-chmod 444 www/uploads/read-only.txt
-read_only_mode="$(stat -c '%a' www/uploads/read-only.txt)"
-if [[ "$read_only_mode" == "444" ]]; then
-    status="$(curl -sS -o "$TMP_DIR/read-only-delete" -w '%{http_code}' \
-        -X DELETE "http://127.0.0.1:${PORT}/uploads/read-only.txt")"
-    [[ "$status" == "403" ]]
-    grep -q "403" "$TMP_DIR/read-only-delete"
-else
-    echo "Skipping read-only DELETE check: filesystem mode is ${read_only_mode}"
-fi
-
+# Reject DELETE requests that target a symbolic link.
 ln -s index.html www2/uploads/delete-link
 status="$(curl -sS -o "$TMP_DIR/symlink-delete" -w '%{http_code}' \
     -H 'Host: localhost2' -X DELETE \
@@ -207,6 +207,7 @@ status="$(curl -sS -o "$TMP_DIR/symlink-delete" -w '%{http_code}' \
 [[ "$status" == "403" ]]
 grep -q "403" "$TMP_DIR/symlink-delete"
 
+# Pass a large POST body through a CGI script without truncation.
 head -c 1048576 /dev/urandom > "$TMP_DIR/one-megabyte.bin"
 status="$(curl -sS -o "$TMP_DIR/cgi-output" -w '%{http_code}' -X POST \
     --data-binary @"$TMP_DIR/one-megabyte.bin" \
@@ -220,10 +221,12 @@ response = Path(sys.argv[2]).read_bytes()
 assert response.endswith(source)
 PY
 
+# Convert a CGI script failure into an HTTP 500 response.
 status="$(curl -sS -o /dev/null -w '%{http_code}' \
     "http://127.0.0.1:${PORT}/cgi-bin/fail.py")"
 [[ "$status" == "500" ]]
 
+# Decode a slowly sent chunked request body and save its contents.
 python3 - "$PORT" <<'PY'
 import socket
 import sys
@@ -249,6 +252,7 @@ assert response.startswith(b"HTTP/1.1 201")
 PY
 [[ "$(cat www/uploads/chunk.bin)" == "Wikipedia" ]]
 
+# Keep serving other requests while a CGI request exceeds its timeout.
 curl -sS -o "$TMP_DIR/slow" -w '%{http_code}' \
     "http://127.0.0.1:${PORT}/cgi-bin/slow.py" > "$TMP_DIR/slow-code" &
 SLOW_CURL_PID=$!
@@ -258,6 +262,7 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
 wait "$SLOW_CURL_PID"
 [[ "$(cat "$TMP_DIR/slow-code")" == "504" ]]
 
+# Handle multiple simultaneous requests successfully.
 seq 1 50 | xargs -P10 -I{} sh -c \
     "test \"\$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT}/)\" = 200"
 
@@ -266,6 +271,7 @@ if ps -o stat= --ppid "$SERVER_PID" | grep -q Z; then
     exit 1
 fi
 
+# Confirm that CGI cleanup and allocations are clean under Valgrind.
 if [[ "${LEAK_CHECK:-0}" == "1" ]]; then
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true

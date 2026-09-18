@@ -22,6 +22,7 @@ Server::Server(const std::vector<ServerConfig>& servers)
 {
 }
 
+// Closes CGI pipes, clients, listeners, and the epoll descriptor.
 Server::~Server()
 {
     for (std::map<pid_t, CgiState>::iterator it = _cgiByPid.begin();
@@ -48,12 +49,14 @@ Server::~Server()
         close(_epollFd);
 }
 
+// Enables non-blocking mode so socket calls return instead of waiting forever.
 bool Server::_setNonBlocking(int fd)
 {
     const int flags = fcntl(fd, F_GETFL, 0);
     return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
 }
 
+// Prevents descriptors from being inherited by a program started with execve().
 bool Server::_setCloseOnExec(int fd)
 {
     const int flags = fcntl(fd, F_GETFD, 0);
@@ -69,6 +72,7 @@ std::string Server::_trim(const std::string& value)
     return value.substr(first, last - first + 1);
 }
 
+// Converts ASCII uppercase letters to lowercase for case-insensitive matching.
 std::string Server::_toLower(const std::string& value)
 {
     std::string result(value);
@@ -80,6 +84,7 @@ std::string Server::_toLower(const std::string& value)
     return result;
 }
 
+// Converts a number to text for log and error messages.
 std::string Server::_intToString(long value)
 {
     std::ostringstream stream;
@@ -87,12 +92,18 @@ std::string Server::_intToString(long value)
     return stream.str();
 }
 
+// Creates the epoll monitor and opens one listening socket per host/port pair.
 void Server::init()
 {
-    _epollFd = epoll_create(128);
-    if (_epollFd < 0)
+    // epoll_create() creates the event monitor; fcntl() adds FD_CLOEXEC below.
+    _epollFd = epoll_create(1);
+    if (_epollFd < 0 || !_setCloseOnExec(_epollFd))
+    {
+        if (_epollFd >= 0)
+            close(_epollFd);
         throw std::runtime_error("Failed to create epoll instance: " +
             std::string(std::strerror(errno)));
+    }
 
     for (std::size_t i = 0; i < _servers.size(); ++i)
     {
@@ -112,11 +123,13 @@ void Server::init()
     }
 }
 
+// Waits for activity and dispatches each ready descriptor to the right handler.
 void Server::run()
 {
     struct epoll_event events[128];
     while (true)
     {
+        // Wait up to 1000 ms; the timeout lets periodic cleanup still run.
         const int count = epoll_wait(_epollFd, events, 128, 1000);
         if (count < 0)
         {
@@ -129,14 +142,18 @@ void Server::run()
         for (int i = 0; i < count; ++i)
         {
             const int fd = events[i].data.fd;
+            // A listener with EPOLLIN means a new client can be accepted.
             if (_listeners.find(fd) != _listeners.end())
                 _acceptClients(fd);
+            // CGI pipes use EPOLLIN/EPOLLOUT to exchange data with the child.
             else if (_cgiPipeRefs.find(fd) != _cgiPipeRefs.end())
                 _handleCgiEvent(fd, events[i].events);
+            // Client sockets use the event flags to read requests or write responses.
             else if (_clients.find(fd) != _clients.end())
                 _handleClientEvent(fd, events[i].events);
             else
             {
+                // Unknown descriptors are removed from epoll and closed.
                 epoll_ctl(_epollFd, EPOLL_CTL_DEL, fd, NULL);
                 close(fd);
             }

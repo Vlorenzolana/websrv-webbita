@@ -11,6 +11,7 @@ Request::Request()
 {
 }
 
+// Releases request-owned standard-library data when a request is destroyed.
 Request::~Request() {}
 
 // Trims leading and trailing whitespace/newlines
@@ -430,7 +431,7 @@ void Request::setMaxBodySize(std::size_t maxBodySize)
         _setError(413);
 }
 
-// Getter implementations
+// Getter implementations: expose parsed request data without modifying it.
 const std::string& Request::getMethod() const { return _method; }
 const std::string& Request::getPath() const { return _path; }
 const std::string& Request::getQueryString() const { return _queryString; }
@@ -443,7 +444,7 @@ bool Request::headersComplete() const { return _headersComplete; }
 bool Request::isChunked() const { return _isChunkedBody; }
 std::size_t Request::getDeclaredContentLength() const { return _contentLength; }
 
-// Searches for a case-insensitive header value
+// Looks up a header after normalizing its name to lowercase.
 std::string Request::getHeaderValue(const std::string& key) const
 {
     const HeaderMap::const_iterator it = _headers.find(_toLower(key));

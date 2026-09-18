@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// Starts a CGI child and registers its stdin/stdout pipes with epoll.
 bool Server::_startCgi(int clientFd, const Request& request,
     const ServerConfig& server, const LocationConfig* location,
     const std::string& fullPath)
@@ -48,8 +49,10 @@ bool Server::_startCgi(int clientFd, const Request& request,
 
     struct epoll_event outputEvent;
     std::memset(&outputEvent, 0, sizeof(outputEvent));
+    // EPOLLIN watches CGI stdout; EPOLLRDHUP detects a closed output pipe.
     outputEvent.events = EPOLLIN | EPOLLRDHUP;
     outputEvent.data.fd = process.stdoutFd;
+    // Add the CGI output pipe to the epoll watch list.
     if (epoll_ctl(_epollFd, EPOLL_CTL_ADD, process.stdoutFd, &outputEvent) < 0)
     {
         _cgiByPid[process.pid].clientFd = -1;
@@ -67,8 +70,10 @@ bool Server::_startCgi(int clientFd, const Request& request,
         _cgiPipeRefs[process.stdinFd] = CgiPipeRef(process.pid, true);
         struct epoll_event inputEvent;
         std::memset(&inputEvent, 0, sizeof(inputEvent));
+        // EPOLLOUT means CGI stdin can accept more request-body bytes.
         inputEvent.events = EPOLLOUT | EPOLLRDHUP;
         inputEvent.data.fd = process.stdinFd;
+        // Add the CGI input pipe to the epoll watch list.
         if (epoll_ctl(_epollFd, EPOLL_CTL_ADD, process.stdinFd, &inputEvent) < 0)
         {
             _cgiByPid[process.pid].clientFd = -1;
@@ -80,6 +85,7 @@ bool Server::_startCgi(int clientFd, const Request& request,
     return true;
 }
 
+// Unregisters and closes one CGI pipe, updating its state flags.
 void Server::_closeCgiPipe(int fd)
 {
     const std::map<int, CgiPipeRef>::iterator reference = _cgiPipeRefs.find(fd);
@@ -127,6 +133,7 @@ void Server::_closeCgiPipe(int fd)
     }
 }
 
+// Collects CGI children that have exited without blocking the server.
 void Server::_reapCgiProcesses()
 {
     std::vector<pid_t> pids;
@@ -159,6 +166,7 @@ void Server::_reapCgiProcesses()
     }
 }
 
+// Closes idle clients and terminates CGI processes that exceed their deadlines.
 void Server::_checkTimeouts()
 {
     const std::time_t now = std::time(NULL);
@@ -191,6 +199,7 @@ void Server::_checkTimeouts()
         _terminateCgi(timedOutCgi[i], true);
 }
 
+// Builds the final HTTP response once CGI output and process status are ready.
 void Server::_tryFinalizeCgi(pid_t childPid)
 {
     std::map<pid_t, CgiState>::iterator cgi = _cgiByPid.find(childPid);
@@ -243,6 +252,7 @@ void Server::_tryFinalizeCgi(pid_t childPid)
     _queueResponse(clientFd, _buildCgiHttpResponse(output));
 }
 
+// Stops a CGI process and closes both communication pipes.
 void Server::_terminateCgi(pid_t childPid, bool timedOut)
 {
     std::map<pid_t, CgiState>::iterator cgi = _cgiByPid.find(childPid);
@@ -263,6 +273,7 @@ void Server::_terminateCgi(pid_t childPid, bool timedOut)
     }
 }
 
+// Deletes all bookkeeping for a completed CGI process.
 void Server::_eraseCgiState(pid_t childPid)
 {
     _cgiByPid.erase(childPid);

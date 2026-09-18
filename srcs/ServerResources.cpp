@@ -17,16 +17,20 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// Serves a file, an index page, or a directory listing for GET.
 std::string Server::_handleGet(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
+    // Convert the URL path into a path inside the configured document root.
     std::string fullPath =
         _resolvePath(server, location, request.getPath());
 
     struct stat fileStat;
+    // A missing filesystem entry becomes HTTP 404.
     if (stat(fullPath.c_str(), &fileStat) != 0)
         return _buildErrorResponse(404, &server, location);
 
+    // Directories need a trailing slash before looking for an index file.
     if (S_ISDIR(fileStat.st_mode))
     {
         if (!request.getPath().empty() && request.getPath()[request.getPath().size() - 1] != '/')
@@ -36,11 +40,13 @@ std::string Server::_handleGet(const ServerConfig& server,
             if (host.empty())
                 host = server.host + ":" + _intToString(server.port);
             
+            // Redirect /folder to /folder/ so relative links work correctly.
             headers["Location"] = "http://" + host + request.getPath() + "/";
             return _buildResponse(301, _statusText(301), "text/html",
                 _defaultErrorBody(301, _statusText(301)), headers);
         }
 
+        // Try each index filename configured for this location.
         bool foundIndex = false;
         for (std::size_t i = 0; i < location->index_files.size(); ++i)
         {
@@ -60,15 +66,18 @@ std::string Server::_handleGet(const ServerConfig& server,
         }
         if (!foundIndex)
         {
+            // If no index exists, optionally generate a directory listing.
             if (location->autoindex)
                 return _buildResponse(200, _statusText(200), "text/html",
                     _buildAutoindexPage(fullPath, request.getPath()));
             return _buildErrorResponse(404, &server, location);
         }
     }
+    // Only regular files can be sent as normal resources.
     else if (!S_ISREG(fileStat.st_mode))
         return _buildErrorResponse(403, &server, location);
 
+    // Binary mode preserves images and other non-text files.
     std::ifstream file(fullPath.c_str(), std::ios::binary);
     if (!file.is_open())
         return _buildErrorResponse(403, &server, location);
@@ -78,9 +87,11 @@ std::string Server::_handleGet(const ServerConfig& server,
         content.str());
 }
 
+// Handles uploads and returns the created resource response.
 std::string Server::_handlePost(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
+    // POST is forbidden when this location has no upload directory.
     if (location->upload_path.empty())
     {
         const std::string fullPath =
@@ -91,6 +102,7 @@ std::string Server::_handlePost(const ServerConfig& server,
         return _buildErrorResponse(403, &server, location);
     }
 
+    // Multipart requests contain one or more named file parts.
     const std::string contentType = _toLower(request.getHeaderValue("content-type"));
     std::vector<std::string> savedNames;
     bool saved = false;
@@ -104,6 +116,7 @@ std::string Server::_handlePost(const ServerConfig& server,
             savedNames.push_back(name);
     }
 
+    // A malformed request or failed write becomes HTTP 400.
     if (!saved)
         return _buildErrorResponse(400, &server, location);
 
@@ -114,14 +127,17 @@ std::string Server::_handlePost(const ServerConfig& server,
     body << "\n";
 
     std::map<std::string, std::string> headers;
+    // Tell the client which URL received the upload.
     headers["Location"] = request.getPath();
     return _buildResponse(201, _statusText(201), "text/plain", body.str(), headers);
 }
 
+// Deletes one regular file while refusing symbolic links.
 std::string Server::_handleDelete(const ServerConfig& server,
     const Request& request, const LocationConfig* location) const
 {
     const std::string fullPath = _resolvePath(server, location, request.getPath());
+    // O_NOFOLLOW prevents opening a symbolic link instead of its target.
     const int fileFd = open(fullPath.c_str(), O_RDONLY | O_NOFOLLOW);
     if (fileFd < 0)
         return _buildErrorResponse(errno == ELOOP ? 403 : 404, &server, location);
@@ -131,18 +147,22 @@ std::string Server::_handleDelete(const ServerConfig& server,
     if (stat(fullPath.c_str(), &fileStat) != 0)
         return _buildErrorResponse(404, &server, location);
 
+    // Directories, devices, and links are not deletable resources here.
     if (!S_ISREG(fileStat.st_mode) || S_ISLNK(fileStat.st_mode))
         return _buildErrorResponse(403, &server, location);
 
+    // Remove the file and report an internal error if the filesystem rejects it.
     if (std::remove(fullPath.c_str()) != 0)
         return _buildErrorResponse(500, &server, location);
 
     return _buildResponse(204, _statusText(204), "text/plain", "");
 }
 
+// Saves a non-multipart request body using a safe filename.
 bool Server::_saveRawUpload(const Request& request,
     const LocationConfig* location, std::string& savedName) const
 {
+    // Keep only the filename portion of the requested upload URL.
     std::string relative = request.getPath();
     if (relative.compare(0, location->path.size(), location->path) == 0)
         relative.erase(0, location->path.size());
@@ -157,6 +177,7 @@ bool Server::_saveRawUpload(const Request& request,
         path += '/';
     path += savedName;
 
+    // trunc replaces an existing upload with the new body.
     std::ofstream file(path.c_str(), std::ios::binary | std::ios::trunc);
     if (!file.is_open())
         return false;
@@ -165,6 +186,7 @@ bool Server::_saveRawUpload(const Request& request,
     return file.good();
 }
 
+// Extracts each uploaded file from a multipart/form-data body.
 bool Server::_saveMultipartUpload(const Request& request,
     const LocationConfig* location, std::vector<std::string>& savedNames) const
 {
@@ -174,6 +196,7 @@ bool Server::_saveMultipartUpload(const Request& request,
     if (boundaryValue.empty())
         return false;
 
+    // Multipart boundaries separate headers and file data inside the body.
     const std::string boundary = "--" + boundaryValue;
     const std::string& body = request.getBody();
     std::size_t position = 0;
@@ -192,6 +215,7 @@ bool Server::_saveMultipartUpload(const Request& request,
         else if (body.compare(partStart, 1, "\n") == 0)
             partStart += 1;
 
+        // Locate the blank line that separates part headers from part data.
         std::size_t headerEnd = body.find("\r\n\r\n", partStart);
         std::size_t separatorSize = 4;
         if (headerEnd == std::string::npos)
@@ -216,6 +240,7 @@ bool Server::_saveMultipartUpload(const Request& request,
                 disposition = _trim(line.substr(colon + 1));
         }
 
+        // Read the filename declared by Content-Disposition.
         const std::string rawFileName =
             _extractMultipartParameter(disposition, "filename");
         const std::size_t dataStart = headerEnd + separatorSize;
@@ -231,6 +256,7 @@ bool Server::_saveMultipartUpload(const Request& request,
 
         if (!rawFileName.empty())
         {
+            // Sanitize the client-provided filename before using it on disk.
             const std::string safeName = _safeFileName(rawFileName);
             if (safeName.empty())
                 return false;
@@ -254,6 +280,7 @@ bool Server::_saveMultipartUpload(const Request& request,
     return wroteFile;
 }
 
+// Removes path components and replaces unsafe control/separator characters.
 std::string Server::_safeFileName(const std::string& value)
 {
     std::string name = value;
@@ -271,6 +298,7 @@ std::string Server::_safeFileName(const std::string& value)
     return name;
 }
 
+// Reads a parameter such as boundary= or filename= from a multipart header.
 std::string Server::_extractMultipartParameter(const std::string& header,
     const std::string& parameter)
 {
@@ -294,12 +322,14 @@ std::string Server::_extractMultipartParameter(const std::string& header,
         end == std::string::npos ? std::string::npos : end - position));
 }
 
+// Queues an HTTP error response for a connected client.
 void Server::_sendErrorResponse(int clientFd, int code,
     const ServerConfig* server, const LocationConfig* location)
 {
     _queueResponse(clientFd, _buildErrorResponse(code, server, location));
 }
 
+// Builds an error response using a configured page when one exists.
 std::string Server::_buildErrorResponse(int code, const ServerConfig* server,
     const LocationConfig* location) const
 {
@@ -307,11 +337,13 @@ std::string Server::_buildErrorResponse(int code, const ServerConfig* server,
         _loadErrorBody(code, server, location));
 }
 
+// Loads the configured error-page file, falling back to generated HTML.
 std::string Server::_loadErrorBody(int code, const ServerConfig* server,
     const LocationConfig* location) const
 {
     std::string configuredPath;
     std::string root;
+    // A location-specific error page has priority over the server-wide page.
     if (location != NULL)
     {
         const std::map<int, std::string>::const_iterator it =
@@ -335,6 +367,7 @@ std::string Server::_loadErrorBody(int code, const ServerConfig* server,
 
     if (!configuredPath.empty())
     {
+        // Absolute-looking configured paths are relative to the server root.
         if (configuredPath[0] == '/')
             configuredPath = root + configuredPath;
         std::ifstream file(configuredPath.c_str(), std::ios::binary);
@@ -348,6 +381,7 @@ std::string Server::_loadErrorBody(int code, const ServerConfig* server,
     return _defaultErrorBody(code, _statusText(code));
 }
 
+// Converts CGI headers/body into a complete HTTP response for the client.
 std::string Server::_buildCgiHttpResponse(const std::string& rawOutput) const
 {
     int statusCode = 200;
@@ -364,6 +398,7 @@ std::string Server::_buildCgiHttpResponse(const std::string& rawOutput) const
         separatorSize = 2;
     }
 
+    // CGI output may use CRLF or LF to separate headers from the body.
     if (headerEnd != std::string::npos)
     {
         const std::string headerBlock = rawOutput.substr(0, headerEnd);
@@ -380,6 +415,7 @@ std::string Server::_buildCgiHttpResponse(const std::string& rawOutput) const
             const std::string name = _trim(line.substr(0, colon));
             const std::string lowerName = _toLower(name);
             const std::string value = _trim(line.substr(colon + 1));
+            // CGI Status overrides 200; Location implies a redirect by default.
             if (lowerName == "status")
             {
                 std::istringstream status(value);
@@ -403,6 +439,7 @@ std::string Server::_buildCgiHttpResponse(const std::string& rawOutput) const
         body, extraHeaders);
 }
 
+// Serializes status, headers, and body into an HTTP/1.1 response.
 std::string Server::_buildResponse(int code, const std::string& statusText,
     const std::string& contentType, const std::string& body,
     const std::map<std::string, std::string>& extraHeaders) const
@@ -410,6 +447,7 @@ std::string Server::_buildResponse(int code, const std::string& statusText,
     std::ostringstream response;
     response << "HTTP/1.1 " << code << " " << statusText << "\r\n";
     response << "Content-Type: " << contentType << "\r\n";
+    // The length lets the client know exactly how many body bytes to read.
     response << "Content-Length: " << body.size() << "\r\n";
     response << "Connection: close\r\n";
     for (std::map<std::string, std::string>::const_iterator it =
