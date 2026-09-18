@@ -34,28 +34,35 @@ void Server::_openListener(const ServerConfig& server)
         throw std::runtime_error("Failed to configure listening socket: " + reason);
     }
 
-    struct sockaddr_in address;
-    std::memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_port = htons(static_cast<unsigned short>(server.port));
-  
-  struct hostent* host = gethostbyname(server.host.c_str());
-    if (host == NULL || host->h_addrtype != AF_INET ||
-        host->h_addr_list == NULL || host->h_addr_list[0] == NULL)
+    struct addrinfo hints;
+    struct addrinfo* addressInfo = NULL;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    const std::string port = _intToString(server.port);
+    const int addressStatus = getaddrinfo(
+        server.host.c_str(), port.c_str(), &hints, &addressInfo);
+    if (addressStatus != 0 || addressInfo == NULL)
     {
+        if (addressInfo != NULL)
+            freeaddrinfo(addressInfo);
         close(listenerFd);
-        throw std::runtime_error("Invalid listen host: " + server.host);
+        throw std::runtime_error("Invalid listen host " + server.host + ": " +
+            gai_strerror(addressStatus));
     }
-    std::memcpy(&address.sin_addr, host->h_addr_list[0],
-        sizeof(address.sin_addr));
-    if (bind(listenerFd, reinterpret_cast<struct sockaddr*>(&address),
-            sizeof(address)) < 0)
+
+    if (bind(listenerFd, addressInfo->ai_addr, addressInfo->ai_addrlen) < 0)
     {
         const std::string reason = std::strerror(errno);
+        freeaddrinfo(addressInfo);
         close(listenerFd);
         throw std::runtime_error("Failed to bind " + server.host + ":" +
             _intToString(server.port) + ": " + reason);
     }
+    freeaddrinfo(addressInfo);
+
     if (listen(listenerFd, SOMAXCONN) < 0)
     {
         const std::string reason = std::strerror(errno);
