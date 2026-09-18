@@ -34,9 +34,8 @@ void Server::_openListener(const ServerConfig& server)
         throw std::runtime_error("Failed to configure listening socket: " + reason);
     }
 
-    struct addrinfo hints;
+    struct addrinfo hints = {};
     struct addrinfo* addressInfo = NULL;
-    std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
@@ -71,8 +70,7 @@ void Server::_openListener(const ServerConfig& server)
             _intToString(server.port) + ": " + reason);
     }
 
-    struct epoll_event event;
-    std::memset(&event, 0, sizeof(event));
+    struct epoll_event event = {};
     event.events = EPOLLIN;
     event.data.fd = listenerFd;
     if (epoll_ctl(_epollFd, EPOLL_CTL_ADD, listenerFd, &event) < 0)
@@ -115,8 +113,7 @@ void Server::_acceptClients(int listenerFd)
             continue;
         }
 
-        struct epoll_event event;
-        std::memset(&event, 0, sizeof(event));
+        struct epoll_event event = {};
         event.events = EPOLLIN | EPOLLRDHUP;
         event.data.fd = clientFd;
         if (epoll_ctl(_epollFd, EPOLL_CTL_ADD, clientFd, &event) < 0)
@@ -346,8 +343,7 @@ void Server::_queueResponse(int clientFd, const std::string& response)
     _pendingResponses[clientFd] = pending;
     _clients[clientFd].processing = true;
 
-    struct epoll_event event;
-    std::memset(&event, 0, sizeof(event));
+    struct epoll_event event = {};
     event.events = EPOLLOUT | EPOLLRDHUP;
     event.data.fd = clientFd;
     if (epoll_ctl(_epollFd, EPOLL_CTL_MOD, clientFd, &event) < 0)
