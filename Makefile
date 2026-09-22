@@ -1,0 +1,40 @@
+NAME := webserv
+CXX := c++
+CXXFLAGS := -Wall -Wextra -Werror -std=c++98
+
+SRCS := srcs/main.cpp \
+        srcs/ConfigParser.cpp \
+        srcs/ConfigValidator.cpp \
+        srcs/Request.cpp \
+        srcs/CGIHandler.cpp \
+		srcs/Server.cpp \
+		srcs/ServerNetwork.cpp \
+		srcs/ServerCgi.cpp \
+		srcs/ServerRequest.cpp \
+		srcs/ServerResources.cpp
+
+OBJS := $(SRCS:.cpp=.o)
+
+all: $(NAME)
+
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -Iincludes -c $< -o $@
+
+clean:
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+test: all
+	./tests/smoke_test.sh
+
+leaks: all
+	LEAK_CHECK=1 ./tests/smoke_test.sh
+
+re: fclean all
+
+.PHONY: all clean fclean test leaks re

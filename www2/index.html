@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webserv Evaluation Tester - 42 Urduliz</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e; --card-bg: #2d2d2d;
+            --text-color: #e0e0e0; --accent: #007acc;
+            --success: #4caf50; --error: #f44336; --warning: #ff9800;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color); color: var(--text-color);
+            max-width: 1000px; margin: 0 auto; padding: 20px;
+        }
+        h1, h2, h3 { color: #ffffff; }
+        .config-panel { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 5px solid #ff9800; }
+        .config-panel input { padding: 5px; margin-right: 10px; background: #444; color: white; border: 1px solid #555; width: 300px;}
+        .test-card {
+            background-color: var(--card-bg); border-left: 5px solid var(--accent);
+            padding: 20px; margin-bottom: 20px; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .test-card.terminal {
+            border-left: 5px solid #9c27b0;
+            background-color: #2a2530;
+        }
+        .test-card.vhost {
+            border-left: 5px solid #00bcd4;
+        }
+        .badge {
+            padding: 4px 8px; border-radius: 4px; font-weight: bold; color: white; font-size: 0.85em; margin-right: 10px;
+        }
+        .get { background-color: var(--success); }
+        .post { background-color: var(--warning); color: black;}
+        .delete { background-color: var(--error); }
+        .unknown { background-color: #ff5722; }
+        .cgi { background-color: #e91e63; }
+        .terminal-badge { background-color: #9c27b0; }
+        .vhost-badge { background-color: #00bcd4; color: black; }
+        button {
+            background-color: var(--accent); color: white; border: none; padding: 10px 15px;
+            border-radius: 4px; cursor: pointer; margin-top: 10px; font-weight: bold;
+        }
+        button:hover { background-color: #005999; }
+        .browser-link {
+            display: inline-block; margin-left: 15px; color: #4da6ff; text-decoration: none; font-weight: bold;
+        }
+        .browser-link:hover { text-decoration: underline; color: #80c1ff; }
+        pre { background-color: #111; padding: 15px; border-radius: 4px; overflow-x: auto; color: #a6e22e; margin-top: 5px; }
+        .curl-cmd { background-color: #222; color: #f8f8f2; border: 1px dashed #555; user-select: all; cursor: pointer;}
+        .info-text { color: #aaa; font-style: italic; font-size: 0.9em; margin-bottom: 10px;}
+        .cmd-title { margin-top: 15px; margin-bottom: 0; color: #ccc; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+    <h1>🚀 Webserv Evaluation Tester</h1>
+    
+    <div class="config-panel">
+        <h3>Configuración Global</h3>
+        <label>Servidor Base: <input type="text" id="baseUrl" value="http://127.0.0.1:8081"></label>
+        <p><small>La URL intenta autodetectarse. Haz clic en los recuadros de código para copiarlos rápidamente.</small></p>
+    </div>
+
+    <!-- 1. GET & Errors -->
+    <h2>1. Métodos Básicos y Rutas Estáticas</h2>
+    
+    <div class="test-card">
+        <h3><span class="badge get">GET</span> Index principal (Raíz)</h3>
+        <p>Carga la página principal del servidor (root: ./www).</p>
+        <button onclick="runTest('index-res', '/', {method: 'GET'})">Probar en panel</button>
+        <a href="http://127.0.0.1:8081/" target="_blank" class="browser-link" data-path="/">🌐 Ver en navegador</a>
+        <pre id="index-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/">curl -i -X GET "[URL]/"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge get">GET</span> Autoindex</h3>
+        <p>Lista el directorio de subidas (autoindex on en /uploads).</p>
+        <button onclick="runTest('autoindex-res', '/uploads/', {method: 'GET'})">Probar Autoindex</button>
+        <a href="http://127.0.0.1:8081/uploads/" target="_blank" class="browser-link" data-path="/uploads/">🌐 Ver en navegador</a>
+        <pre id="autoindex-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/uploads/">curl -i -X GET "[URL]/uploads/"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge get">GET</span> Página 404 Personalizada</h3>
+        <p>Prueba una ruta inexistente para ver la página de error 404.html configurada.</p>
+        <button onclick="runTest('404-res', '/ruta_inventada', {method: 'GET'})">Probar 404</button>
+        <a href="http://127.0.0.1:8081/ruta_inventada" target="_blank" class="browser-link" data-path="/ruta_inventada">🌐 Ver en navegador</a>
+        <pre id="404-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/ruta_inventada">curl -i -X GET "[URL]/ruta_inventada"</pre>
+    </div>
+
+    <!-- 2. POST & Body Limits -->
+    <h2>2. Uploads y Límites (Client Max Body Size: 4M)</h2>
+
+    <div class="test-card">
+        <h3><span class="badge post">POST</span> Subir Archivo Válido</h3>
+        <p>Sube un archivo de texto plano al directorio /uploads/.</p>
+        <button onclick="runTest('post-ok-res', '/uploads/archivo.txt', {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: 'Este es el contenido de prueba para el upload.'})">Probar POST Válido</button>
+        <pre id="post-ok-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/uploads/archivo.txt">curl -i -X POST -H "Content-Type: text/plain" -d "Este es el contenido de prueba para el upload." "[URL]/uploads/archivo.txt"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge post">POST</span> Exceder Límite de Tamaño (> 4M)</h3>
+        <p>Envía un payload gigante (4.5 MB) para provocar un Error 413 Payload Too Large.</p>
+        <button onclick="runTest('post-big-res', '/uploads/gigante.txt', {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: 'A'.repeat(4500000)})">Probar POST 413</button>
+        <pre id="post-big-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/uploads/gigante.txt">curl -i -X POST -H "Content-Type: text/plain" -d "A... (4.5MB)" "[URL]/uploads/gigante.txt"</pre>
+    </div>
+
+    <!-- 3. Metodos Permitidos y DELETE -->
+    <h2>3. Permisos y Métodos</h2>
+
+    <div class="test-card">
+        <h3><span class="badge delete">DELETE</span> Método Permitido (Borrar subida)</h3>
+        <button onclick="runTest('del-ok-res', '/uploads/archivo.txt', {method: 'DELETE'})">Probar DELETE</button>
+        <pre id="del-ok-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/uploads/archivo.txt">curl -i -X DELETE "[URL]/uploads/archivo.txt"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge delete">DELETE</span> Método Denegado (Error 405)</h3>
+        <p>Prueba a borrar un archivo en /directory donde solo hay GET y POST.</p>
+        <button onclick="runTest('del-no-res', '/directory/test.txt', {method: 'DELETE'})">Probar DELETE Denegado</button>
+        <pre id="del-no-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/directory/test.txt">curl -i -X DELETE "[URL]/directory/test.txt"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge unknown">UNKNOWN</span> Método Desconocido (Error 501)</h3>
+        <p>Comprueba que el servidor no crashea al recibir un método inventado.</p>
+        <button onclick="runTest('unk-res', '/', {method: 'PURGE'})">Probar Método Desconocido</button>
+        <pre id="unk-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/">curl -i -X PURGE "[URL]/"</pre>
+    </div>
+
+    <!-- 4. CGI -->
+    <h2>4. Common Gateway Interface (CGI)</h2>
+
+    <div class="test-card">
+        <h3><span class="badge cgi">CGI GET</span> Ejecución de Script echo.py</h3>
+        <p>Pasa parámetros por Query String al CGI de Python.</p>
+        <button onclick="runTest('cgi-get-res', '/cgi-bin/echo.py?name=Evaluador&value=42', {method: 'GET'})">Probar CGI GET</button>
+        <a href="http://127.0.0.1:8081/cgi-bin/echo.py?name=Evaluador&value=42" target="_blank" class="browser-link" data-path="/cgi-bin/echo.py?name=Evaluador&value=42">🌐 Ver en navegador</a>
+        <pre id="cgi-get-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/cgi-bin/echo.py?name=Evaluador&value=42">curl -i "[URL]/cgi-bin/echo.py?name=Evaluador&value=42"</pre>
+    </div>
+
+    <div class="test-card">
+        <h3><span class="badge cgi">CGI POST</span> Ejecución de Script echo.py</h3>
+        <p>Pasa parámetros por el Body (STDIN) al CGI.</p>
+        <button onclick="runTest('cgi-post-res', '/cgi-bin/echo.py', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'name=Evaluador&project=Webserv'})">Probar CGI POST</button>
+        <pre id="cgi-post-res">Resultado...</pre>
+        <p class="cmd-title">Comando cURL:</p>
+        <pre class="curl-cmd" data-path="/cgi-bin/echo.py">curl -i -X POST -d "name=Evaluador&project=Webserv" "[URL]/cgi-bin/echo.py"</pre>
+    </div>
+
+    <!-- 5. Virtual Hosts -->
+    <h2>5. Virtual Hosts (Pruebas por Terminal)</h2>
+    <p class="info-text">Demuestra el enrutamiento basado en <code>server_name</code> compartiendo el mismo puerto. Inyectamos la cabecera <code>Host</code> manualmente con cURL.</p>
+    
+    <div class="test-card terminal vhost">
+        <h3><span class="badge vhost-badge">VHOST 1</span> server_name: localhost</h3>
+        <p>Apunta al bloque con <code>root ./www;</code></p>
+        <p class="cmd-title">Comando cURL (Index):</p>
+        <pre class="curl-cmd" data-path="">curl -i -X GET -H "Host: localhost" "http://127.0.0.1:8081/"</pre>
+    </div>
+
+    <div class="test-card terminal vhost">
+        <h3><span class="badge vhost-badge">VHOST 2</span> server_name: localhost2</h3>
+        <p>Apunta al bloque con <code>root ./www2;</code></p>
+        <p class="cmd-title">Comando cURL (Index de www2):</p>
+        <pre class="curl-cmd" data-path="">curl -i -X GET -H "Host: localhost2" "http://127.0.0.1:8081/"</pre>
+        <p class="cmd-title">Comando cURL (404 personalizado de www2):</p>
+        <pre class="curl-cmd" data-path="">curl -i -X GET -H "Host: localhost2" "http://127.0.0.1:8081/missing"</pre>
+        <p class="cmd-title">Comando cURL (Subida de prueba en www2):</p>
+        <pre class="curl-cmd" data-path="">curl -i -X POST -H "Host: localhost2" -H "Content-Type: text/plain" -d "Archivo subido por VHOST2" "http://127.0.0.1:8081/uploads/test_vhost2.txt"</pre>
+    </div>
+
+    <!-- 6. Pruebas por Terminal (General) -->
+    <h2>6. Pruebas por Terminal (Casos Límite y Estrés)</h2>
+    <p class="info-text">Ejecuta estos comandos en tu terminal (WSL/Linux). Comprueban el timeout de CGI y el correcto manejo del epoll con conexiones no bloqueantes.</p>
+
+    <div class="test-card terminal">
+        <h3><span class="badge terminal-badge">TERMINAL</span> Petición Truncada (Incompleta)</h3>
+        <p>Promete un cuerpo grande pero corta la conexión abruptamente enviando solo una línea. El servidor no debe colgarse.</p>
+        <pre class="curl-cmd" data-path="">(echo -ne "POST /uploads/trunc.txt HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5000\r\n\r\nSolo envio esto...") | nc -w 2 127.0.0.1 8081</pre>
+    </div>
+
+    <div class="test-card terminal">
+        <h3><span class="badge terminal-badge">TERMINAL</span> Petición Fragmentada (Byte a Byte)</h3>
+        <p>Envía la petición muy lentamente. Demuestra que <code>epoll</code> no bloquea a otros clientes.</p>
+        <pre class="curl-cmd" data-path="">(echo -ne "GE"; sleep 1; echo -ne "T / HT"; sleep 1; echo -ne "TP/1.1\r\n"; sleep 1; echo -ne "Host: localhost\r\n\r\n") | nc 127.0.0.1 8081</pre>
+    </div>
+
+    <div class="test-card terminal">
+        <h3><span class="badge terminal-badge">TERMINAL</span> Transfer-Encoding: chunked</h3>
+        <p>Verifica que el servidor recibe y desfragmenta el cuerpo correctamente.</p>
+        <pre class="curl-cmd" data-path="/uploads/chunked.txt">curl -i -X POST -H "Transfer-Encoding: chunked" -d "Prueba de chunks enviada por curl" "[URL]/uploads/chunked.txt"</pre>
+    </div>
+
+    <div class="test-card terminal">
+        <h3><span class="badge terminal-badge">TERMINAL</span> CGI Timeout (10s)</h3>
+        <p>Invoca a <code>hold.py</code>. El servidor debe matarlo a los 25s y devolver 504 Gateway Timeout.</p>
+        <pre class="curl-cmd" data-path="/cgi-bin/hold.py">curl -i "[URL]/cgi-bin/hold.py"</pre>
+    </div>
+
+    <div class="test-card terminal">
+        <h3><span class="badge terminal-badge">TERMINAL</span> Prueba de Estrés (Siege)</h3>
+        <p>Lanza 100 clientes concurrentes haciendo 50 repeticiones cada uno (>99.5% disponibilidad esperada).</p>
+        <pre class="curl-cmd" data-path="/">siege -b -c 100 -r 50 "[URL]/"</pre>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const baseInput = document.getElementById('baseUrl');
+            if (window.location.protocol.startsWith('http')) {
+                baseInput.value = window.location.origin.replace(/\/$/, '');
+            }
+            updateUrls();
+        });
+
+        document.getElementById('baseUrl').addEventListener('input', updateUrls);
+
+        function updateUrls() {
+            const baseUrl = document.getElementById('baseUrl').value;
+            let hostPort = baseUrl.replace(/^https?:\/\//, '');
+
+            document.querySelectorAll('.curl-cmd').forEach(el => {
+                let originalText = el.innerText;
+                originalText = originalText.replace(/\[URL\]/g, baseUrl);
+                
+                if (originalText.includes('nc 127.0.0.1 8081')) {
+                    let parts = hostPort.split(':');
+                    let host = parts[0] || '127.0.0.1';
+                    let port = parts[1] || '80';
+                    originalText = originalText.replace(/nc [0-9\.]+ [0-9]+/g, `nc ${host} ${port}`);
+                }
+                el.innerText = originalText;
+            });
+
+            document.querySelectorAll('.browser-link').forEach(el => {
+                const path = el.getAttribute('data-path');
+                if(path) { el.href = baseUrl + path; }
+            });
+        }
+
+        async function runTest(elementId, path, options) {
+            const baseUrl = document.getElementById('baseUrl').value;
+            const url = baseUrl + path;
+            const resultBox = document.getElementById(elementId);
+            
+            resultBox.innerText = `Enviando ${options.method} a ${url}...\n`;
+
+            try {
+                const startTime = performance.now();
+                const response = await fetch(url, options);
+                const endTime = performance.now();
+                
+                let output = `STATUS: ${response.status} ${response.statusText}\n`;
+                output += `TIEMPO: ${(endTime - startTime).toFixed(2)} ms\n\n`;
+                
+                output += `--- HEADERS ---\n`;
+                for (let [key, value] of response.headers) {
+                    output += `${key}: ${value}\n`;
+                }
+                
+                output += `\n--- BODY ---\n`;
+                const text = await response.text();
+                output += text ? text : "(Vacío o no parseable)";
+                
+                resultBox.innerText = output;
+            } catch (error) {
+                resultBox.innerText = `ERROR DE RED (CORS o Conexión Rechazada): \n${error.message}\n\nSi el servidor bloquea la petición (p.ej. por CORS), utiliza el comando cURL de abajo en tu terminal.`;
+            }
+        }
+    </script>
+</body>
+</html>
